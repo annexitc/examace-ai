@@ -132,7 +132,7 @@ const SUBJECTS = [
 const EXAM_DATES = {
   "WAEC 2025":  new Date("2026-05-05"),
   "NECO 2025":  new Date("2026-06-16"),
-  "JAMB 2025":  new Date("2026-04-16"),
+  "JAMB 2025":  new Date("2026-04-26"),
 };
 
 // Nigeria-specific topic maps for each subject
@@ -757,6 +757,13 @@ function JambCBT({ onSaveHistory }) {
                   </div>
                   <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>{isFlagged?"🚩 Flagged":"🏳️ Flag"}</button>
                 </div>
+                {/* Show comprehension passage if present */}
+                {q.passage&&(
+                  <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:12,marginBottom:12}}>
+                    <div style={{fontSize:10,fontWeight:800,color:C.gold,marginBottom:6,textTransform:"uppercase",letterSpacing:1}}>📖 Read the passage carefully</div>
+                    <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.9,fontStyle:"italic"}}>{q.passage}</div>
+                  </div>
+                )}
                 <div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
               </Card>
 
@@ -1060,6 +1067,13 @@ Keep it warm and Nigeria-context aware.`);
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
               <div style={{fontSize:11,fontWeight:800,color:C.blue}}>{exam} {q.year||year} · {subject}{q.difficulty?" · "+q.difficulty:""}</div>
               <AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/>
+            {/* Comprehension passage */}
+            {q.passage&&(
+              <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:12,margin:"8px 0"}}>
+                <div style={{fontSize:10,fontWeight:800,color:C.gold,marginBottom:6,textTransform:"uppercase",letterSpacing:1}}>📖 Read the passage carefully</div>
+                <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.9,fontStyle:"italic"}}>{q.passage}</div>
+              </div>
+            )}
             </div>
             <div style={{fontSize:15,fontWeight:700,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
           </Card>
