@@ -1,5 +1,5 @@
 /* eslint-disable */
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Component } from "react";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // THEME
@@ -21,7 +21,10 @@ const C = {
 // BACKEND API — 4-TIER ROUTER
 // All AI calls go through the backend which handles: Gemini → DeepSeek → Groq → Claude
 // ═══════════════════════════════════════════════════════════════════════════
-const BACKEND = "https://examace-backend.onrender.com";
+// Auto-detect backend: same origin in production (Render), localhost in dev
+const BACKEND = (typeof window !== "undefined" && window.location.hostname !== "localhost")
+  ? ""          // same-origin: frontend & backend on same Render service
+  : "https://examace-backend.onrender.com";
 
 const callAI = async (messages, system, imgData) => {
   const body = { messages, system, imgData };
@@ -47,21 +50,36 @@ const fetchQuestions = async (subject, exam, year, count) => {
     count:   String(count),
     ...(year && year !== "any" ? { year } : {}),
   });
-  const res = await fetch(`${BACKEND}/api/questions?${params}`);
-  if (!res.ok) throw new Error(`Questions API error: ${res.status}`);
-  return res.json(); // { questions, meta }
+  try {
+    const res = await fetch(`${BACKEND}/api/questions?${params}`);
+    if (!res.ok) throw new Error(`Questions API error: ${res.status}`);
+    return res.json();
+  } catch(e) {
+    console.warn("Questions API unavailable, will use AI fallback via chat endpoint");
+    // Return empty — caller will handle fallback
+    return { questions: [], meta: { alocCount:0, aiCount:0, total:0, error: e.message } };
+  }
 };
 
 // ── BATCH QUESTION FETCHER — for JAMB CBT (all 4 subjects at once) ────────────
 const fetchQuestionsBatch = async (subjects) => {
-  // subjects: [{name, exam, year, count}]
-  const res = await fetch(`${BACKEND}/api/questions/batch`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ subjects }),
-  });
-  if (!res.ok) throw new Error(`Batch API error: ${res.status}`);
-  return res.json(); // { results: {subjectName: [questions]}, meta, summary }
+  try {
+    const res = await fetch(`${BACKEND}/api/questions/batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subjects }),
+    });
+    if (!res.ok) throw new Error(`Batch API error: ${res.status}`);
+    return res.json();
+  } catch(e) {
+    console.warn("Batch API unavailable:", e.message);
+    // Return empty structure — CBT will fall back to AI generation
+    return {
+      results: Object.fromEntries(subjects.map(s=>[s.name, []])),
+      meta:    Object.fromEntries(subjects.map(s=>[s.name, {alocCount:0,aiCount:0,total:0}])),
+      summary: { totalReal:0, totalAI:0, totalQuestions:0 },
+    };
+  }
 };
 
 // Source badge colours
@@ -103,7 +121,7 @@ const updateStreak = () => {
 // NIGERIA CURRICULUM DATA
 // ═══════════════════════════════════════════════════════════════════════════
 const EXAMS    = ["WAEC","NECO","JAMB"];
-const YEARS    = ["2024","2023","2022","2021","2020","2019","2018","2017","2016","2015","2014","2013","2012","2010","2008","2005","2003","2000"];
+const YEARS    = ["2025","2024","2023","2022","2021","2020","2019","2018","2017","2016","2015","2014","2013","2012","2010","2008","2005","2003","2000"];
 const SUBJECTS = [
   "Mathematics","English Language","Physics","Chemistry","Biology",
   "Economics","Government","Literature in English","Accounting","Commerce",
@@ -464,122 +482,175 @@ function HistoryDashboard({ onClose }) {
 // JAMB CBT — Full 180-question simulation with Nigeria past question prompts
 // ═══════════════════════════════════════════════════════════════════════════
 function JambCBT({ onSaveHistory }) {
-  const [screen,setScreen]=useState("setup");
-  const [subjects,setSubjects]=useState(["Use of English","Mathematics","Physics","Chemistry"]);
-  const [allQs,setAllQs]=useState({});
-  const [curSubj,setCurSubj]=useState(0);
-  const [curQ,setCurQ]=useState(0);
-  const [answers,setAnswers]=useState({});
-  const [flagged,setFlagged]=useState({});
-  const [timeLeft,setTimeLeft]=useState(120*60);
-  const [loading,setLoading]=useState(false);
-  const [loadProgress,setLoadProgress]=useState({current:"",done:[],total:4});
-  const [scores,setScores]=useState({});
+  const [screen,setScreen]   = useState("setup");
+  const [subjects,setSubjects]= useState(["Use of English","Mathematics","Physics","Chemistry"]);
+  const [allQs,setAllQs]     = useState({});
+  const [curSubj,setCurSubj] = useState(0);
+  const [curQ,setCurQ]       = useState(0);
+  const [answers,setAnswers] = useState({});
+  const [flagged,setFlagged] = useState({});
+  const [timeLeft,setTimeLeft]= useState(120*60);
+  const [loading,setLoading] = useState(false);
+  const [loadMsg,setLoadMsg] = useState("");
+  const [loadDone,setLoadDone]= useState([]);
+  const [loadErr,setLoadErr] = useState("");
+  const [scores,setScores]   = useState({});
   const [reviewing,setReviewing]=useState(null);
-  const timerRef=useRef();
+  const timerRef  = useRef();
+  const allQsRef  = useRef({});   // keep a ref in sync so timer closure can access latest
+  const answersRef= useRef({});
+
+  // Keep refs in sync with state
+  useEffect(()=>{ allQsRef.current   = allQs;   },[allQs]);
+  useEffect(()=>{ answersRef.current = answers; },[answers]);
 
   const getQCount = s => s==="Use of English"?60:40;
   const totalQuestions = subjects.reduce((s,subj)=>s+getQCount(subj),0);
 
+  // Timer — uses refs to avoid stale closure on submitAll
   useEffect(()=>{
     if(screen==="test"){
-      timerRef.current=setInterval(()=>{setTimeLeft(t=>{if(t<=1){clearInterval(timerRef.current);submitAll();return 0;}return t-1;});},1000);
+      timerRef.current=setInterval(()=>{
+        setTimeLeft(t=>{
+          if(t<=1){ clearInterval(timerRef.current); doSubmit(); return 0; }
+          return t-1;
+        });
+      },1000);
     }
     return()=>clearInterval(timerRef.current);
   },[screen]);
 
   const fmtTime = s=>`${String(Math.floor(s/3600)).padStart(2,"0")}:${String(Math.floor((s%3600)/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
 
-  // Nigeria-specific JAMB question generation with past-question style prompts
-  // generateSubject removed — now uses fetchQuestionsBatch via /api/questions/batch
-
+  // ── Start test — load from ALOC + AI fallback ──────────────────────────────
   const startTest = async () => {
     setLoading(true);
-    setLoadProgress({current:"Connecting to past questions database...",done:[],total:subjects.length});
+    setLoadErr("");
+    setLoadDone([]);
+    setLoadMsg("Connecting to ALOC past questions database...");
 
     try {
-      // Fetch all 4 subjects in parallel using batch endpoint (ALOC + AI fallback)
       const batchPayload = subjects.map(name => ({
-        name,
-        exam: "jamb",   // JAMB CBT always uses UTME type
-        year: null,     // mixed years for authenticity
-        count: getQCount(name),
+        name, exam:"jamb", year:null, count:getQCount(name),
       }));
 
-      setLoadProgress(p=>({...p,current:"Fetching ALOC real past questions..."}));
-      const { results, meta, summary } = await fetchQuestionsBatch(batchPayload);
+      setLoadMsg("Fetching real JAMB past questions...");
+      const data = await fetchQuestionsBatch(batchPayload);
+      const { results, meta, summary } = data;
 
-      // Show breakdown
-      console.log(`📚 CBT loaded: ${summary.totalReal} real + ${summary.totalAI} AI questions`);
+      console.log(`📚 CBT: ${summary.totalReal} real + ${summary.totalAI} AI questions`);
 
-      // Mark individual subject progress
       const generated = {};
-      for (const subj of subjects) {
-        generated[subj] = results[subj] || [];
-        setLoadProgress(p=>({...p, done:[...p.done, subj]}));
+      for(const subj of subjects){
+        const qs = results[subj] || [];
+        generated[subj] = qs;
+        setLoadDone(d=>[...d, subj]);
+        if(qs.length === 0){
+          console.warn(`⚠️  No questions loaded for ${subj}`);
+        }
       }
 
+      // If backend returned nothing, fall back to AI generation via /api/chat
+      const totalLoaded = Object.values(generated).reduce((s,qs)=>s+qs.length, 0);
+      if(totalLoaded === 0){
+        setLoadMsg("Backend unavailable — generating with AI directly...");
+        for(const subj of subjects){
+          setLoadMsg(`Generating ${subj} questions with AI...`);
+          try {
+            const qCount = getQCount(subj);
+            const prompt = `Generate exactly ${qCount} JAMB-style MCQs for "${subj}". `
+              + `Follow official JAMB syllabus. Use Nigerian context. `
+              + `Return ONLY a JSON array: `
+              + `[{"q":"","options":{"A":"","B":"","C":"","D":""},"answer":"A","explanation":"","topic":"","year":"20XX","difficulty":"easy","source":"AI"}]`;
+            const { text } = await callAI(prompt, `You are a JAMB examiner for ${subj}.`);
+            const clean = text.replace(/\`\`\`json|\`\`\`/g,"").trim();
+            const start = clean.indexOf("["), end = clean.lastIndexOf("]");
+            if(start >= 0 && end >= 0){
+              const parsed = JSON.parse(clean.slice(start, end+1));
+              if(Array.isArray(parsed) && parsed.length > 0){
+                generated[subj] = parsed.slice(0, qCount);
+                setLoadDone(d=>[...d, subj]);
+              }
+            }
+          } catch(aiErr){
+            console.error(`AI fallback for ${subj} failed:`, aiErr);
+          }
+        }
+        const totalAfterFallback = Object.values(generated).reduce((s,qs)=>s+qs.length, 0);
+        if(totalAfterFallback === 0){
+          throw new Error("Could not load questions from any source. Check your internet connection and try again.");
+        }
+      }
+
+      allQsRef.current = generated;
       setAllQs(generated);
       setAnswers({}); setFlagged({});
-      setCurSubj(0); setCurQ(0);
+      setCurSubj(0);  setCurQ(0);
       setTimeLeft(120*60);
       setScreen("test");
       updateStreak();
     } catch(e) {
       console.error("CBT load error:", e);
-      alert("Failed to load questions. Please check your connection and try again.");
+      setLoadErr(e.message || "Failed to load questions. Please try again.");
     }
     setLoading(false);
   };
 
-  const submitAll = () => {
+  // ── Submit — uses ref so timer closure always has fresh data ──────────────
+  const doSubmit = () => {
     clearInterval(timerRef.current);
-    const sc={};
+    const qs  = allQsRef.current;
+    const ans = answersRef.current;
+    const sc  = {};
     subjects.forEach(s=>{
-      const qs=allQs[s]||[];
-      const ans=answers[s]||{};
-      sc[s]={correct:qs.filter((q,i)=>ans[i]===q.answer).length,total:qs.length};
+      const qArr = qs[s]||[];
+      const aMap = ans[s]||{};
+      sc[s]={ correct:qArr.filter((_,i)=>aMap[i]===qArr[i]?.answer).length, total:qArr.length };
     });
     setScores(sc);
     setScreen("result");
-    const totalCorrect=Object.values(sc).reduce((s,v)=>s+v.correct,0);
-    const totalQ=Object.values(sc).reduce((s,v)=>s+v.total,0);
-    const jambScore=Math.round((totalCorrect/totalQ)*400);
-    onSaveHistory({type:"cbt",jambScore,totalCorrect,totalQ,subjects:subjects.join(", "),subjectBreakdown:subjects.map(s=>({name:s,correct:sc[s]?.correct||0,total:sc[s]?.total||0}))});
+    const totalCorrect = Object.values(sc).reduce((s,v)=>s+v.correct,0);
+    const totalQ       = Object.values(sc).reduce((s,v)=>s+v.total,0);
+    const jambScore    = totalQ>0?Math.round((totalCorrect/totalQ)*400):0;
+    onSaveHistory({
+      type:"cbt", jambScore, totalCorrect, totalQ,
+      subjects:subjects.join(", "),
+      subjectBreakdown:subjects.map(s=>({name:s,correct:sc[s]?.correct||0,total:sc[s]?.total||0}))
+    });
   };
 
-  const setAnswer = (letter)=>{const s=subjects[curSubj];setAnswers(a=>({...a,[s]:{...(a[s]||{}),[curQ]:letter}}));};
-  const toggleFlag = ()=>{const s=subjects[curSubj];setFlagged(f=>{const set=new Set(f[s]||[]);set.has(curQ)?set.delete(curQ):set.add(curQ);return{...f,[s]:set};});};
-  const totalScore=()=>Object.values(scores).reduce((s,v)=>s+v.correct,0);
-  const jambScore=()=>{const tq=Object.values(scores).reduce((s,v)=>s+v.total,0);return tq>0?Math.round((totalScore()/tq)*400):0;};
+  const setAnswer   = (letter)=>{const s=subjects[curSubj];setAnswers(a=>{const n={...a,[s]:{...(a[s]||{}),[curQ]:letter}};answersRef.current=n;return n;});};
+  const toggleFlag  = ()=>{const s=subjects[curSubj];setFlagged(f=>{const set=new Set(f[s]||[]);set.has(curQ)?set.delete(curQ):set.add(curQ);return{...f,[s]:set};});};
+  const totalScore  = ()=>Object.values(scores).reduce((s,v)=>s+v.correct,0);
+  const jambScore   = ()=>{const tq=Object.values(scores).reduce((s,v)=>s+v.total,0);return tq>0?Math.round((totalScore()/tq)*400):0;};
 
-  const q=allQs[subjects[curSubj]]?.[curQ];
-  const curAns=answers[subjects[curSubj]]?.[curQ];
-  const isFlagged=(flagged[subjects[curSubj]]||new Set()).has(curQ);
-  const subjQs=allQs[subjects[curSubj]]||[];
-  const answeredInSubj=Object.values(answers[subjects[curSubj]]||{}).length;
+  const q            = allQs[subjects[curSubj]]?.[curQ];
+  const curAns       = answers[subjects[curSubj]]?.[curQ];
+  const isFlagged    = (flagged[subjects[curSubj]]||new Set()).has(curQ);
+  const subjQs       = allQs[subjects[curSubj]]||[];
+  const answeredInSubj= Object.values(answers[subjects[curSubj]]||{}).length;
+  const currentSubjCount = getQCount(subjects[curSubj]);
 
   return (
     <div>
-      {/* SETUP SCREEN */}
+      {/* ── SETUP SCREEN ─────────────────────────────────────────────────── */}
       {screen==="setup"&&(
         <>
           <Card style={{background:`linear-gradient(135deg,#1a0a2e,${C.card})`,borderColor:C.purple+"44"}}>
             <div style={{fontSize:28,marginBottom:4}}>🖥️</div>
             <div style={{fontWeight:900,fontSize:17,color:C.purple,marginBottom:4}}>JAMB CBT Mock Exam</div>
-            <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>Authentic JAMB past-question style · AI-powered · 180 questions · 120 minutes</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>Real ALOC past questions + AI fallback · 180 questions · 120 minutes</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              {[["⏱️ Duration","120 minutes (2 hours)"],["📝 Total Questions","180 questions"],["📗 Use of English","60 questions (compulsory)"],["📘 Other 3 Subjects","40 questions each"],["🎯 Total Score","400 marks"],["⚡ Scoring","+1 correct · 0 wrong (no negative)"]].map(([l,v])=>(
+              {[["⏱️ Duration","120 minutes"],["📝 Questions","180 total"],["📗 Use of English","60 Qs (compulsory)"],["📘 Other Subjects","40 Qs each"],["🎯 Total Score","400 marks"],["⚡ Scoring","+1 correct, 0 wrong"]].map(([l,v])=>(
                 <div key={l} style={{background:C.card2,borderRadius:10,padding:"8px 10px"}}><div style={{fontSize:10,color:C.muted}}>{l}</div><div style={{fontSize:12,fontWeight:700,color:C.textLight}}>{v}</div></div>
               ))}
             </div>
           </Card>
 
-          {/* Hot topics preview */}
+          {/* Hot topics */}
           <Card style={{background:C.gold+"0a",borderColor:C.gold+"33"}}>
-            <Label c={C.gold}>🔥 JAMB Hot Topics Guaranteed in Your Test</Label>
-            <div style={{fontSize:12,color:C.muted,marginBottom:8}}>These topics appear in JAMB almost every year — AI will prioritise them!</div>
-            {["Mathematics","Physics","Chemistry","Biology","English Language"].map(s=>(
+            <Label c={C.gold}>🔥 JAMB Hot Topics in Your Test</Label>
+            {["Mathematics","Physics","Chemistry","Biology"].map(s=>(
               <div key={s} style={{background:C.card2,borderRadius:10,padding:10,marginBottom:6}}>
                 <div style={{fontSize:11,fontWeight:800,color:C.gold,marginBottom:5}}>📐 {s}</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
@@ -589,25 +660,19 @@ function JambCBT({ onSaveHistory }) {
             ))}
           </Card>
 
-          <Card><Label c={C.purple}>Subject 1 — Fixed (Compulsory)</Label><div style={{background:C.purple+"22",border:`1px solid ${C.purple}44`,borderRadius:10,padding:"10px 14px",color:C.purple,fontWeight:700,fontSize:13}}>📝 Use of English — 60 Questions (Every JAMB candidate must do this)</div></Card>
+          <Card><Label c={C.purple}>Subject 1 — Fixed (Compulsory)</Label><div style={{background:C.purple+"22",border:`1px solid ${C.purple}44`,borderRadius:10,padding:"10px 14px",color:C.purple,fontWeight:700,fontSize:13}}>📝 Use of English — 60 Questions</div></Card>
 
           {[1,2,3].map(i=>(
             <Card key={i}>
               <Label c={C.purple}>Subject {i+1} — 40 Questions</Label>
               <Sel value={subjects[i]} onChange={v=>setSubjects(s=>{const n=[...s];n[i]=v;return n;})}
                 options={["Mathematics","Further Mathematics","Physics","Chemistry","Biology","Economics","Government","Literature in English","Geography","Agricultural Science","Accounting","Commerce","Christian Religious Studies","Islamic Studies"]}
-                placeholder="Select your subject"/>
-              {subjects[i]&&JAMB_HOT_TOPICS[subjects[i]]&&(
-                <div style={{marginTop:8,background:C.card2,borderRadius:8,padding:"8px 10px"}}>
-                  <div style={{fontSize:10,color:C.gold,fontWeight:800,marginBottom:4}}>🔥 Top {subjects[i]} topics for JAMB:</div>
-                  {JAMB_HOT_TOPICS[subjects[i]].slice(0,3).map((t,i)=><div key={i} style={{fontSize:11,color:C.muted,lineHeight:1.6}}>→ {t}</div>)}
-                </div>
-              )}
+                placeholder="Select subject"/>
             </Card>
           ))}
 
           <Card style={{background:C.purple+"11",borderColor:C.purple+"33"}}>
-            <Label c={C.purple}>Your JAMB Combination</Label>
+            <Label c={C.purple}>Your Combination</Label>
             {subjects.map((s,i)=>(
               <div key={i} style={{display:"flex",gap:10,alignItems:"center",background:C.card2,borderRadius:10,padding:"8px 12px",marginBottom:6}}>
                 <span style={{width:22,height:22,background:C.purple,color:"#fff",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0}}>{i+1}</span>
@@ -615,121 +680,128 @@ function JambCBT({ onSaveHistory }) {
                 <span style={{fontSize:11,color:C.purple,fontWeight:700}}>{getQCount(s)} Qs</span>
               </div>
             ))}
-            <div style={{marginTop:8,background:C.card,borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:C.muted}}>Total</span><span style={{fontSize:13,fontWeight:800,color:C.gold}}>{totalQuestions} questions · 120 minutes</span></div>
+            <div style={{marginTop:8,background:C.card,borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between"}}><span style={{fontSize:12,color:C.muted}}>Total</span><span style={{fontSize:13,fontWeight:800,color:C.gold}}>{totalQuestions} questions · 120 mins</span></div>
           </Card>
 
-          {/* JAMB rules */}
-          <Card style={{background:"#0a1628",borderColor:C.blue+"33"}}>
-            <Label c={C.sky}>📋 Official JAMB CBT Rules</Label>
-            {["120 minutes (2 hours) — manage your time wisely","Use of English: 60 Qs · Other subjects: 40 Qs each","Correct answer = 1 mark · Wrong = 0 (no negative marking)","Navigate freely between all questions","Flag difficult questions and return to them later","Test auto-submits when timer reaches 00:00:00","Questions generated in authentic JAMB past-question style","Target 280+ for federal university | 300+ for competitive courses","Avg time per question: ~40 seconds — do not linger"].map((r,i)=>(
-              <div key={i} style={{display:"flex",gap:8,marginBottom:6,fontSize:12,color:"#93c5fd"}}><span style={{color:C.blue,fontWeight:700,flexShrink:0}}>→</span>{r}</div>
-            ))}
-          </Card>
+          {/* Error message */}
+          {loadErr&&(
+            <Card style={{background:C.red+"18",borderColor:C.red+"44"}}>
+              <div style={{fontSize:12,color:C.red,fontWeight:700,marginBottom:4}}>⚠️ Failed to Load Questions</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>{loadErr}</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:8}}>Check that your ALOC_ACCESS_TOKEN is set in Render and try again.</div>
+            </Card>
+          )}
 
           <Btn onClick={startTest} loading={loading} color={C.purple} tc="#fff">
             {loading?(
               <div style={{textAlign:"center",width:"100%"}}>
-                <div style={{marginBottom:4}}>📚 Loading Real JAMB Past Questions...</div>
-                <div style={{fontSize:11,color:C.purple+"cc",marginBottom:8}}>{loadProgress.current||"Connecting to ALOC database..."}</div>
-                {/* Subject progress dots */}
-                <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:6}}>
+                <div style={{marginBottom:4}}>📚 {loadMsg}</div>
+                <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:6}}>
                   {subjects.map((s,i)=>(
                     <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                      <div style={{width:12,height:12,borderRadius:"50%",background:loadProgress.done.includes(s)?C.green:loadProgress.current.includes(s)?C.gold:C.border,transition:"background .3s"}}/>
-                      <div style={{fontSize:8,color:loadProgress.done.includes(s)?C.green:C.sub}}>{s.split(" ")[0]}</div>
+                      <div style={{width:12,height:12,borderRadius:"50%",background:loadDone.includes(s)?C.green:C.border,transition:"background .3s"}}/>
+                      <div style={{fontSize:8,color:loadDone.includes(s)?C.green:C.sub}}>{s.split(" ")[0]}</div>
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:10,color:C.sub}}>{loadProgress.done.length}/{loadProgress.total} subjects · ALOC API + AI fallback</div>
               </div>
             ):"🖥️ Start JAMB CBT Mock Exam"}
           </Btn>
         </>
       )}
 
-      {/* TEST SCREEN */}
-      {screen==="test"&&q&&(
+      {/* ── TEST SCREEN ──────────────────────────────────────────────────── */}
+      {screen==="test"&&(
         <div style={{animation:"fadeUp .3s ease"}}>
-          {/* Timer bar */}
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"10px 12px",marginBottom:10}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              <div style={{background:timeLeft<600?C.red:timeLeft<1800?C.orange:C.green,color:"#fff",borderRadius:10,padding:"6px 14px",fontWeight:900,fontSize:16,fontFamily:"monospace",animation:timeLeft<300?"pulse .5s infinite":"none",flexShrink:0}}>
-                ⏱ {fmtTime(timeLeft)}
+          {/* Show loading skeleton if q not yet available */}
+          {!q?(
+            <Card style={{textAlign:"center",padding:40}}>
+              <div style={{fontSize:32,marginBottom:12}}>⏳</div>
+              <div style={{fontWeight:700,color:C.purple}}>Loading questions...</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:6}}>Subject: {subjects[curSubj]}</div>
+            </Card>
+          ):(
+            <>
+              {/* Timer bar */}
+              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"10px 12px",marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div style={{background:timeLeft<600?C.red:timeLeft<1800?C.orange:C.green,color:"#fff",borderRadius:10,padding:"6px 14px",fontWeight:900,fontSize:16,fontFamily:"monospace",animation:timeLeft<300?"pulse .5s infinite":"none",flexShrink:0}}>⏱ {fmtTime(timeLeft)}</div>
+                  <div style={{flex:1,background:C.card2,borderRadius:8,height:8,overflow:"hidden"}}><div style={{background:timeLeft<600?C.red:timeLeft<1800?C.orange:C.green,height:"100%",width:`${(timeLeft/(120*60))*100}%`,transition:"width 1s linear"}}/></div>
+                  <button onClick={doSubmit} style={{background:C.red,border:"none",borderRadius:8,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>Submit</button>
+                </div>
+                <div style={{display:"flex",gap:5,overflowX:"auto"}}>
+                  {subjects.map((s,i)=>{const cnt=getQCount(s),ans=Object.values(answers[s]||{}).length;return(<button key={i} onClick={()=>{setCurSubj(i);setCurQ(0);}} style={{background:curSubj===i?C.purple:"transparent",border:`1px solid ${curSubj===i?C.purple:C.border}`,borderRadius:8,padding:"5px 10px",color:curSubj===i?"#fff":C.muted,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,fontFamily:"inherit"}}>{s.split(" ")[0]} ({ans}/{cnt})</button>);})}
+                </div>
               </div>
-              <div style={{flex:1,background:C.card2,borderRadius:8,height:8,overflow:"hidden"}}><div style={{background:timeLeft<600?C.red:timeLeft<1800?C.orange:C.green,height:"100%",width:`${(timeLeft/(120*60))*100}%`,transition:"width 1s linear"}}/></div>
-              <button onClick={submitAll} style={{background:C.red,border:"none",borderRadius:8,padding:"6px 12px",color:"#fff",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>Submit</button>
-            </div>
-            <div style={{display:"flex",gap:5,overflowX:"auto"}}>
-              {subjects.map((s,i)=>{const cnt=getQCount(s),ans=Object.values(answers[s]||{}).length;return(<button key={i} onClick={()=>{setCurSubj(i);setCurQ(0);}} style={{background:curSubj===i?C.purple:"transparent",border:`1px solid ${curSubj===i?C.purple:C.border}`,borderRadius:8,padding:"5px 10px",color:curSubj===i?"#fff":C.muted,fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,fontFamily:"inherit"}}>{s.split(" ")[0]} ({ans}/{cnt})</button>);})}
-            </div>
-          </div>
 
-          {/* Question grid navigator */}
-          <Card style={{padding:10}}>
-            <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:6}}>{subjects[curSubj]} · Q{curQ+1}/{getQCount(subjects[curSubj])}</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:3,maxHeight:120,overflowY:"auto"}}>
-              {subjQs.map((_,i)=>{const ans=answers[subjects[curSubj]]?.[i],fl=(flagged[subjects[curSubj]]||new Set()).has(i);return(<button key={i} onClick={()=>setCurQ(i)} style={{width:26,height:26,borderRadius:5,border:`1.5px solid ${curQ===i?C.gold:fl?C.orange:ans?C.green:C.border}`,background:curQ===i?C.gold:fl?C.orange+"22":ans?C.green+"22":C.card2,color:curQ===i?"#000":fl?C.orange:ans?C.green:C.sub,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{i+1}</button>);})}
-            </div>
-            <div style={{display:"flex",gap:14,marginTop:8,fontSize:10,color:C.muted}}>
-              <span>🟢 Answered ({answeredInSubj})</span>
-              <span>🟠 Flagged</span>
-              <span>⬜ Unanswered ({getQCount(subjects[curSubj])-answeredInSubj})</span>
-            </div>
-          </Card>
+              {/* Question navigator grid */}
+              <Card style={{padding:10}}>
+                <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:6}}>{subjects[curSubj]} · Q{curQ+1}/{currentSubjCount}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:3,maxHeight:120,overflowY:"auto"}}>
+                  {Array.from({length:currentSubjCount},(_,i)=>{const ans=answers[subjects[curSubj]]?.[i],fl=(flagged[subjects[curSubj]]||new Set()).has(i);return(<button key={i} onClick={()=>setCurQ(i)} style={{width:26,height:26,borderRadius:5,border:`1.5px solid ${curQ===i?C.gold:fl?C.orange:ans?C.green:C.border}`,background:curQ===i?C.gold:fl?C.orange+"22":ans?C.green+"22":C.card2,color:curQ===i?"#000":fl?C.orange:ans?C.green:C.sub,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{i+1}</button>);})}
+                </div>
+                <div style={{display:"flex",gap:14,marginTop:8,fontSize:10,color:C.muted}}>
+                  <span>🟢 Answered ({answeredInSubj})</span>
+                  <span>🟠 Flagged</span>
+                  <span>⬜ Unanswered ({currentSubjCount-answeredInSubj})</span>
+                </div>
+              </Card>
 
-          {/* Question card */}
-          <Card style={{background:C.purple+"11",borderColor:C.purple+"44"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div>
-                <div style={{fontSize:11,fontWeight:800,color:C.purple}}>{subjects[curSubj]} · Question {curQ+1} of {getQCount(subjects[curSubj])}</div>
-                {q.topic&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>Topic: {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</div>}
-                <div style={{marginTop:3}}><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div>
+              {/* Question card */}
+              <Card style={{background:C.purple+"11",borderColor:C.purple+"44"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:800,color:C.purple}}>{subjects[curSubj]} · Q{curQ+1}/{currentSubjCount}</div>
+                    {q.topic&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>Topic: {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</div>}
+                    <div style={{marginTop:3}}><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div>
+                  </div>
+                  <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>{isFlagged?"🚩 Flagged":"🏳️ Flag"}</button>
+                </div>
+                <div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
+              </Card>
+
+              {/* Options */}
+              <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                {Object.entries(q.options||{}).map(([letter,text])=>(
+                  <button key={letter} onClick={()=>setAnswer(letter)} style={{background:curAns===letter?C.purple+"33":C.card,border:`2px solid ${curAns===letter?C.purple:C.border}`,borderRadius:14,padding:"13px 16px",color:curAns===letter?C.purple:C.textLight,fontSize:13,textAlign:"left",cursor:"pointer",display:"flex",gap:12,alignItems:"center",fontFamily:"inherit",transition:"all .15s"}}>
+                    <span style={{width:30,height:30,borderRadius:"50%",background:curAns===letter?C.purple:C.card2,color:curAns===letter?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,flexShrink:0}}>{letter}</span>
+                    <span style={{flex:1,lineHeight:1.4}}>{text}</span>
+                  </button>
+                ))}
               </div>
-              <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{isFlagged?"🚩 Flagged":"🏳️ Flag"}</button>
-            </div>
-            <div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
-          </Card>
 
-          {/* Options */}
-          <div style={{display:"flex",flexDirection:"column",gap:9}}>
-            {Object.entries(q.options).map(([letter,text])=>(
-              <button key={letter} onClick={()=>setAnswer(letter)} style={{background:curAns===letter?C.purple+"33":C.card,border:`2px solid ${curAns===letter?C.purple:C.border}`,borderRadius:14,padding:"13px 16px",color:curAns===letter?C.purple:C.textLight,fontSize:13,textAlign:"left",cursor:"pointer",display:"flex",gap:12,alignItems:"center",fontFamily:"inherit",transition:"all .15s"}}>
-                <span style={{width:30,height:30,borderRadius:"50%",background:curAns===letter?C.purple:C.card2,color:curAns===letter?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,flexShrink:0}}>{letter}</span>
-                <span style={{flex:1,lineHeight:1.4}}>{text}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Navigation */}
-          <div style={{display:"flex",gap:8,marginTop:14}}>
-            <button onClick={()=>setCurQ(q=>Math.max(0,q-1))} disabled={curQ===0} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 0",color:curQ===0?C.sub:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Prev</button>
-            {curQ<getQCount(subjects[curSubj])-1
-              ?<button onClick={()=>setCurQ(q=>q+1)} style={{flex:2,background:C.blue,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Next →</button>
-              :curSubj<subjects.length-1
-                ?<button onClick={()=>{setCurSubj(s=>s+1);setCurQ(0);}} style={{flex:2,background:C.purple,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Next Subject →</button>
-                :<button onClick={submitAll} style={{flex:2,background:C.green,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>✅ Submit All</button>}
-          </div>
+              {/* Navigation */}
+              <div style={{display:"flex",gap:8,marginTop:14}}>
+                <button onClick={()=>setCurQ(q=>Math.max(0,q-1))} disabled={curQ===0} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 0",color:curQ===0?C.sub:C.muted,fontWeight:700,fontSize:13,cursor:curQ===0?"not-allowed":"pointer",fontFamily:"inherit"}}>← Prev</button>
+                {curQ<currentSubjCount-1
+                  ?<button onClick={()=>setCurQ(q=>q+1)} style={{flex:2,background:C.blue,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Next →</button>
+                  :curSubj<subjects.length-1
+                    ?<button onClick={()=>{setCurSubj(s=>s+1);setCurQ(0);}} style={{flex:2,background:C.purple,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Next Subject →</button>
+                    :<button onClick={doSubmit} style={{flex:2,background:C.green,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>✅ Submit All</button>}
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* RESULT SCREEN */}
+      {/* ── RESULT SCREEN ────────────────────────────────────────────────── */}
       {screen==="result"&&(
         <div style={{animation:"fadeUp .4s ease"}}>
           <Card style={{background:`linear-gradient(135deg,${C.purple}22,${C.card})`,borderColor:C.purple+"44",textAlign:"center"}}>
             <div style={{fontSize:52,marginBottom:8}}>{jambScore()>=280?"🏆":jambScore()>=200?"✅":"💪"}</div>
             <div style={{fontWeight:900,fontSize:52,color:C.purple}}>{jambScore()}</div>
             <div style={{fontSize:14,color:C.muted,marginBottom:6}}>out of 400</div>
-            <div style={{fontWeight:700,fontSize:14,color:jambScore()>=280?C.green:jambScore()>=200?C.gold:C.red,marginBottom:4}}>{jambScore()>=280?"🎓 University Ready!":jambScore()>=200?"📚 Getting There — Keep Pushing!":"🔄 More Practice Needed"}</div>
+            <div style={{fontWeight:700,fontSize:14,color:jambScore()>=280?C.green:jambScore()>=200?C.gold:C.red,marginBottom:4}}>{jambScore()>=280?"🎓 University Ready!":jambScore()>=200?"📚 Keep Pushing!":"🔄 More Practice Needed"}</div>
             <div style={{fontSize:12,color:C.muted}}>{totalScore()} correct out of {subjects.reduce((s,subj)=>s+(scores[subj]?.total||0),0)} questions</div>
-            {/* Question source stats */}
+            {/* Question source breakdown */}
             {(()=>{
-              const allQsList = subjects.flatMap(s=>allQs[s]||[]);
-              const realCount = allQsList.filter(q=>q.source==="ALOC").length;
-              const aiCount   = allQsList.filter(q=>q.source!=="ALOC").length;
-              return allQsList.length>0?(
+              const all=subjects.flatMap(s=>allQs[s]||[]);
+              const real=all.filter(q=>q.source==="ALOC").length;
+              const ai=all.filter(q=>q.source!=="ALOC").length;
+              return all.length>0?(
                 <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:10,flexWrap:"wrap"}}>
-                  {realCount>0&&<div style={{background:C.green+"18",border:`1px solid ${C.green}33`,borderRadius:20,padding:"3px 12px",fontSize:10,color:C.green,fontWeight:800}}>✅ {realCount} Real Past Questions (ALOC)</div>}
-                  {aiCount>0&&<div style={{background:C.blue+"18",border:`1px solid ${C.blue}33`,borderRadius:20,padding:"3px 12px",fontSize:10,color:C.sky,fontWeight:800}}>🤖 {aiCount} AI-Generated</div>}
+                  {real>0&&<div style={{background:C.green+"18",border:`1px solid ${C.green}33`,borderRadius:20,padding:"3px 12px",fontSize:10,color:C.green,fontWeight:800}}>✅ {real} Real Past Questions</div>}
+                  {ai>0&&<div style={{background:C.blue+"18",border:`1px solid ${C.blue}33`,borderRadius:20,padding:"3px 12px",fontSize:10,color:C.sky,fontWeight:800}}>🤖 {ai} AI-Generated</div>}
                 </div>
               ):null;
             })()}
@@ -741,32 +813,44 @@ function JambCBT({ onSaveHistory }) {
           </Card>
 
           <Card style={{background:"#0a1628",borderColor:C.blue+"33"}}>
-            <Label c={C.sky}>🎓 University Admission Guide (2025)</Label>
-            {[["320-400","UNILAG, UI, OAU, ABU — Medicine, Engineering, Law"],["280-319","Most Federal Universities — Sciences & Arts"],["250-279","State Universities, Polytechnics"],["200-249","Most Polytechnics & some State Universities"],["Below 200","Extra preparation needed — aim for 200 minimum"]].map(([range,unis])=>(
+            <Label c={C.sky}>🎓 University Admission Guide</Label>
+            {[["320-400","UNILAG, UI, OAU, ABU — Medicine, Engineering, Law"],["280-319","Most Federal Universities — Science & Arts"],["250-279","State Universities, Polytechnics"],["200-249","Most Polytechnics & some State Universities"],["Below 200","More preparation needed — aim for 200+"]].map(([range,unis])=>(
               <div key={range} style={{display:"flex",gap:10,marginBottom:8,padding:"8px 10px",background:C.card2,borderRadius:8}}><span style={{fontWeight:800,fontSize:12,color:C.gold,flexShrink:0,minWidth:70}}>{range}</span><span style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{unis}</span></div>
             ))}
           </Card>
 
-          {/* Review wrong answers */}
           <Card>
-            <Label>Review Wrong Answers by Subject</Label>
+            <Label>Review Wrong Answers</Label>
             <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:10}}>
               {subjects.map(s=>(
                 <button key={s} onClick={()=>setReviewing(reviewing===s?null:s)} style={{background:reviewing===s?C.purple+"22":"transparent",border:`1px solid ${reviewing===s?C.purple:C.border}`,borderRadius:20,padding:"5px 12px",color:reviewing===s?C.purple:C.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{s.split(" ")[0]} ({(allQs[s]||[]).filter((_,i)=>answers[s]?.[i]!==allQs[s]?.[i]?.answer).length} wrong)</button>
               ))}
             </div>
-            {reviewing&&(allQs[reviewing]||[]).map((q,i)=>{const userAns=answers[reviewing]?.[i];if(userAns===q.answer)return null;return(<div key={i} style={{background:C.red+"11",border:`1px solid ${C.red}33`,borderRadius:10,padding:12,marginBottom:8}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}><span style={{fontSize:11,color:C.muted}}>Q{i+1} · {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</span><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div><div style={{fontSize:13,color:C.textLight,marginBottom:6,lineHeight:1.5}}>{q.q}</div><div style={{fontSize:12,color:C.red,marginBottom:4}}>Your answer: <b>{userAns||"Not answered"}</b> · Correct: <b style={{color:C.green}}>{q.answer}</b></div><div style={{fontSize:12,color:C.sky,lineHeight:1.6}}>{q.explanation}</div></div>);})}
+            {reviewing&&(allQs[reviewing]||[]).map((q,i)=>{
+              const userAns=answers[reviewing]?.[i];
+              if(userAns===q.answer)return null;
+              return(<div key={i} style={{background:C.red+"11",border:`1px solid ${C.red}33`,borderRadius:10,padding:12,marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                  <span style={{fontSize:11,color:C.muted}}>Q{i+1} · {q.topic||""}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</span>
+                  <AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/>
+                </div>
+                <div style={{fontSize:13,color:C.textLight,marginBottom:6,lineHeight:1.5}}>{q.q}</div>
+                <div style={{fontSize:12,color:C.red,marginBottom:4}}>Your answer: <b>{userAns||"Not answered"}</b> · Correct: <b style={{color:C.green}}>{q.answer}</b></div>
+                <div style={{fontSize:12,color:C.sky,lineHeight:1.6}}>{q.explanation}</div>
+              </div>);
+            })}
           </Card>
 
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{setScreen("setup");setScores({});setReviewing(null);}} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 0",color:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🔄 New Test</button>
-            <a href={`https://wa.me/?text=${encodeURIComponent(`🖥️ JAMB CBT Mock!\nScore: ${jambScore()}/400\n${subjects.map(s=>`${s}: ${scores[s]?.correct||0}/${scores[s]?.total||0}`).join("\n")}\n\nPrepared with ExamAce AI 🏆 🇳🇬`)}`} target="_blank" rel="noreferrer" style={{flex:1,background:C.wa,borderRadius:12,padding:"13px 0",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>💬 Share</a>
+            <button onClick={()=>{setScreen("setup");setScores({});setReviewing(null);setLoadErr("");}} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 0",color:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🔄 New Test</button>
+            <a href={`https://wa.me/?text=${encodeURIComponent("🖥️ JAMB CBT Mock!\nScore: "+jambScore()+"/400\n"+subjects.map(s=>s+": "+(scores[s]?.correct||0)+"/"+(scores[s]?.total||0)).join("\n")+"\n\nExamAce AI 🏆 🇳🇬")}`} target="_blank" rel="noreferrer" style={{flex:1,background:C.wa,borderRadius:12,padding:"13px 0",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>💬 Share</a>
           </div>
         </div>
       )}
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // QUIZ — Nigeria WAEC/NECO/JAMB past questions with live marking
@@ -1706,6 +1790,31 @@ D7-F9 (below 45%): [X]%
 // ═══════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ERROR BOUNDARY — catches crashes so the whole app doesn't go blank
+// ═══════════════════════════════════════════════════════════════════════════
+class ErrorBoundary extends Component {
+  constructor(props){ super(props); this.state={hasError:false,error:null}; }
+  static getDerivedStateFromError(error){ return {hasError:true,error}; }
+  componentDidCatch(error,info){ console.error("ExamAce crash:",error,info); }
+  render(){
+    if(this.state.hasError){
+      return(
+        <div style={{padding:24,background:"#0b0d14",minHeight:"100vh",color:"#f1f5f9",fontFamily:"'Segoe UI',sans-serif"}}>
+          <div style={{background:"#1a0a0a",border:"1px solid #ef444433",borderRadius:16,padding:24,maxWidth:500,margin:"40px auto",textAlign:"center"}}>
+            <div style={{fontSize:48,marginBottom:12}}>⚠️</div>
+            <div style={{fontWeight:900,fontSize:18,color:"#ef4444",marginBottom:8}}>Something went wrong</div>
+            <div style={{fontSize:13,color:"#94a3b8",marginBottom:16,lineHeight:1.6}}>{this.state.error?.message||"An unexpected error occurred"}</div>
+            <button onClick={()=>window.location.reload()} style={{background:"#a855f7",border:"none",borderRadius:12,padding:"12px 24px",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>🔄 Reload App</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [tab,setTab]=useState("ask");
   const [showHistory,setShowHistory]=useState(false);
@@ -1724,6 +1833,7 @@ export default function App() {
   ];
 
   return (
+    <ErrorBoundary>
     <div style={{minHeight:"100vh",background:C.bg,color:C.textLight,fontFamily:"'Segoe UI',sans-serif",paddingBottom:76}}>
       <style>{`*{box-sizing:border-box;margin:0;padding:0}@keyframes spin{to{transform:rotate(360deg)}}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:4px}textarea,input,select,button{box-sizing:border-box}input::placeholder,textarea::placeholder{color:#64748b}select option{background:#1e2130;color:#f1f5f9}`}</style>
 
@@ -1763,5 +1873,6 @@ export default function App() {
         ))}
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
