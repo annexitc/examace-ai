@@ -761,14 +761,36 @@ function JambCBT({ onSaveHistory }) {
               </Card>
 
               {/* Options */}
-              <div style={{display:"flex",flexDirection:"column",gap:9}}>
-                {Object.entries(q.options||{}).map(([letter,text])=>(
-                  <button key={letter} onClick={()=>setAnswer(letter)} style={{background:curAns===letter?C.purple+"33":C.card,border:`2px solid ${curAns===letter?C.purple:C.border}`,borderRadius:14,padding:"13px 16px",color:curAns===letter?C.purple:C.textLight,fontSize:13,textAlign:"left",cursor:"pointer",display:"flex",gap:12,alignItems:"center",fontFamily:"inherit",transition:"all .15s"}}>
-                    <span style={{width:30,height:30,borderRadius:"50%",background:curAns===letter?C.purple:C.card2,color:curAns===letter?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,flexShrink:0}}>{letter}</span>
-                    <span style={{flex:1,lineHeight:1.4}}>{text}</span>
-                  </button>
-                ))}
-              </div>
+              {(()=>{
+                const opts = q.options || {};
+                const hasContent = Object.values(opts).some(v => v && v.trim().length > 0);
+                if (!hasContent) {
+                  return (
+                    <Card style={{background:C.orange+"18",borderColor:C.orange+"44",textAlign:"center"}}>
+                      <div style={{fontSize:13,color:C.orange,fontWeight:700}}>⚠️ Options not available for this question</div>
+                      <div style={{fontSize:11,color:C.muted,marginTop:4}}>This ALOC question has missing option data. Skip to the next question.</div>
+                      <button onClick={()=>setCurQ(q=>Math.min(q+1, currentSubjCount-1))}
+                        style={{marginTop:10,background:C.orange,border:"none",borderRadius:10,padding:"8px 20px",color:"#fff",fontWeight:800,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>
+                        Skip →
+                      </button>
+                    </Card>
+                  );
+                }
+                return (
+                  <div style={{display:"flex",flexDirection:"column",gap:9}}>
+                    {["A","B","C","D"].map(letter => {
+                      const text = opts[letter] || "";
+                      if (!text) return null;
+                      return (
+                        <button key={letter} onClick={()=>setAnswer(letter)} style={{background:curAns===letter?C.purple+"33":C.card,border:`2px solid ${curAns===letter?C.purple:C.border}`,borderRadius:14,padding:"13px 16px",color:curAns===letter?C.purple:C.textLight,fontSize:13,textAlign:"left",cursor:"pointer",display:"flex",gap:12,alignItems:"center",fontFamily:"inherit",transition:"all .15s"}}>
+                          <span style={{width:30,height:30,borderRadius:"50%",background:curAns===letter?C.purple:C.card2,color:curAns===letter?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:13,flexShrink:0}}>{letter}</span>
+                          <span style={{flex:1,lineHeight:1.4}}>{text}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
               {/* Navigation */}
               <div style={{display:"flex",gap:8,marginTop:14}}>
@@ -1043,7 +1065,9 @@ Keep it warm and Nigeria-context aware.`);
           </Card>
 
           <div style={{display:"flex",flexDirection:"column",gap:9}}>
-            {Object.entries(q.options).map(([l,t])=>{
+            {["A","B","C","D"].map(l=>{
+              const t=(q.options||{})[l]||"";
+              if(!t)return null;
               const ok=l===q.answer,isSel=sel===l;
               let bg=C.card,border=C.border,color=C.textLight;
               if(answered){if(ok){bg=C.green+"22";border=C.green;color=C.green;}else if(isSel){bg=C.red+"22";border=C.red;color=C.red;}}
