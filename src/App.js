@@ -112,9 +112,9 @@ const SUBJECTS = [
 ];
 
 const EXAM_DATES = {
-  "WAEC 2025":  new Date("2025-05-05"),
-  "NECO 2025":  new Date("2025-06-16"),
-  "JAMB 2025":  new Date("2025-04-26"),
+  "WAEC 2025":  new Date("2026-05-05"),
+  "NECO 2025":  new Date("2026-06-16"),
+  "JAMB 2025":  new Date("2026-04-16"),
 };
 
 // Nigeria-specific topic maps for each subject
@@ -336,7 +336,7 @@ const dateStr = (ts) => new Date(ts).toLocaleDateString("en-NG",{day:"numeric",m
 
 const SYS = (exam, subject, year) =>
   `You are ExamAce AI — Nigeria's #1 ${exam}/NECO/JAMB exam preparation tutor.
-Context: ${exam} · ${subject}${year ? ` · ${year} past questions style` : ""}
+Context: ${exam} · ${subject}${year ? " · "+year+" past questions style" : ""}
 ${NG_CONTEXT}
 Format: **bold** key terms, numbered steps, clear paragraphs.
 Always follow official Nigerian ${exam} syllabus. Be warm, expert, encouraging.
@@ -448,11 +448,11 @@ function HistoryDashboard({ onClose }) {
             {chartData.length>0&&<Card><Label c={C.gold}>Last {chartData.length} Quiz Scores</Label><MiniBarChart data={chartData} color={C.gold} height={80}/></Card>}
             {quizHistory.length>0&&<Card><Label>Performance Overview</Label><div style={{display:"flex",justifyContent:"space-around",padding:"8px 0"}}><RadialProgress pct={avgScore} color={C.gold} label="Avg Score"/><RadialProgress pct={bestScore} color={C.green} label="Best Score"/><RadialProgress pct={Math.round((gradeDist.A1/Math.max(quizHistory.length,1))*100)} color={C.purple} label="A1 Rate"/></div></Card>}
             {quizHistory.length>0&&<Card><Label>Grade Distribution</Label><div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>{[["A1",gradeDist.A1,C.green],["B",gradeDist.B,C.sky],["C",gradeDist.C,C.orange],["F",gradeDist.F,C.red]].map(([g,count,color])=><div key={g} style={{background:color+"18",border:`1px solid ${color}33`,borderRadius:10,padding:"10px 8px",textAlign:"center"}}><div style={{fontWeight:900,fontSize:22,color}}>{count}</div><div style={{fontSize:10,color:C.muted}}>Grade {g}</div><div style={{fontSize:10,color,fontWeight:700}}>{quizHistory.length>0?Math.round((count/quizHistory.length)*100):0}%</div></div>)}</div></Card>}
-            {subjectAvgs.length>0&&<Card><Label c={C.sky}>Performance by Subject</Label>{subjectAvgs.slice(0,8).map(s=>{const grade=gradeFromPct(s.avg);return(<div key={s.subject} style={{marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:5,alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700,color:C.textLight}}>{s.subject}</div><div style={{fontSize:10,color:C.muted}}>{s.count} quiz{s.count!==1?"zes":""}</div></div><div style={{textAlign:"right"}}><div style={{fontWeight:900,fontSize:15,color:grade.c}}>{s.avg}%</div><div style={{fontSize:10,color:grade.c}}>Grade {grade.g}</div></div></div><div style={{background:C.border,borderRadius:6,height:7}}><div style={{background:grade.c,height:"100%",borderRadius:6,width:`${s.avg}%`,transition:"width 1s ease"}}/></div></div>);})}<div style={{marginTop:10,background:C.card2,borderRadius:10,padding:10}}><div style={{fontSize:11,fontWeight:800,color:C.gold,marginBottom:4}}>💡 AI INSIGHT</div><div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>{subjectAvgs[0]?.avg>=70?`🏆 Strongest in ${subjectAvgs[0].subject} (${subjectAvgs[0].avg}%) — maintain this!`:`Focus more on ${subjectAvgs[0].subject} — currently at ${subjectAvgs[0].avg}%`}{subjectAvgs.length>1&&subjectAvgs[subjectAvgs.length-1]?.avg<60?` Weakest in ${subjectAvgs[subjectAvgs.length-1].subject} (${subjectAvgs[subjectAvgs.length-1].avg}%) — needs urgent attention.`:" Keep practising consistently!"}</div></div></Card>}
+            {subjectAvgs.length>0&&<Card><Label c={C.sky}>Performance by Subject</Label>{subjectAvgs.slice(0,8).map(s=>{const grade=gradeFromPct(s.avg);return(<div key={s.subject} style={{marginBottom:12}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:5,alignItems:"center"}}><div><div style={{fontSize:13,fontWeight:700,color:C.textLight}}>{s.subject}</div><div style={{fontSize:10,color:C.muted}}>{s.count} quiz{s.count!==1?"zes":""}</div></div><div style={{textAlign:"right"}}><div style={{fontWeight:900,fontSize:15,color:grade.c}}>{s.avg}%</div><div style={{fontSize:10,color:grade.c}}>Grade {grade.g}</div></div></div><div style={{background:C.border,borderRadius:6,height:7}}><div style={{background:grade.c,height:"100%",borderRadius:6,width:`${s.avg}%`,transition:"width 1s ease"}}/></div></div>);})}<div style={{marginTop:10,background:C.card2,borderRadius:10,padding:10}}><div style={{fontSize:11,fontWeight:800,color:C.gold,marginBottom:4}}>💡 AI INSIGHT</div><div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>{subjectAvgs[0]?.avg>=70?"🏆 Strongest in "+subjectAvgs[0].subject+" ("+subjectAvgs[0].avg+"%) — maintain this!":"Focus more on "+subjectAvgs[0].subject+" — currently at "+subjectAvgs[0].avg+"%"}{subjectAvgs.length>1&&subjectAvgs[subjectAvgs.length-1]?.avg<60?" Weakest in "+subjectAvgs[subjectAvgs.length-1].subject+" ("+subjectAvgs[subjectAvgs.length-1].avg+"%) — needs urgent attention.":" Keep practising consistently!"}</div></div></Card>}
             {cbtHistory.length>0&&<Card><Label c={C.purple}>JAMB CBT History</Label>{cbtHistory.map((h,i)=><div key={i} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><div><div style={{fontWeight:800,fontSize:15,color:C.purple}}>🖥️ {h.jambScore}/400</div><div style={{fontSize:11,color:C.muted}}>{dateStr(h.timestamp)}</div></div><div style={{background:h.jambScore>=280?C.green+"22":h.jambScore>=200?C.gold+"22":C.red+"22",border:`1px solid ${h.jambScore>=280?C.green:h.jambScore>=200?C.gold:C.red}44`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:800,color:h.jambScore>=280?C.green:h.jambScore>=200?C.gold:C.red}}>{h.jambScore>=280?"🎓 Uni Ready":h.jambScore>=200?"📚 Keep Going":"🔄 More Practice"}</div></div><div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>{(h.subjectBreakdown||[]).map((s,j)=>{const p=Math.round((s.correct/s.total)*100);return <div key={j} style={{background:C.card,borderRadius:8,padding:"6px 10px"}}><div style={{fontSize:11,color:C.textLight,fontWeight:600,marginBottom:3}}>{s.name}</div><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{background:C.border,borderRadius:3,height:5,flex:1,marginRight:6}}><div style={{background:p>=70?C.green:p>=50?C.gold:C.red,height:"100%",borderRadius:3,width:`${p}%`}}/></div><div style={{fontSize:10,fontWeight:800,color:p>=70?C.green:p>=50?C.gold:C.red,flexShrink:0}}>{s.correct}/{s.total}</div></div></div>})}</div></div>)}</Card>}
             <div style={{display:"flex",gap:6,marginBottom:12}}>{[["all","All Sessions"],["quiz","Quizzes"],["cbt","CBT Tests"]].map(([f,l])=><button key={f} onClick={()=>setFilter(f)} style={{background:filter===f?C.blue+"22":"transparent",border:`1px solid ${filter===f?C.blue:C.border}`,borderRadius:20,padding:"6px 14px",color:filter===f?C.blue:C.muted,fontWeight:filter===f?800:400,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>)}</div>
             <Card><Label>Session Log ({filtered.length})</Label>{filtered.length===0?<div style={{textAlign:"center",color:C.muted,fontSize:13,padding:20}}>No sessions of this type yet.</div>:filtered.map((h,i)=>{const grade=h.type==="quiz"?gradeFromPct(h.pct):null;return(<div key={i} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><div style={{width:36,height:36,background:h.type==="cbt"?C.purple+"22":C.blue+"22",border:`1px solid ${h.type==="cbt"?C.purple:C.blue}33`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{h.type==="cbt"?"🖥️":"📝"}</div><div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700,color:C.textLight,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.type==="cbt"?"JAMB CBT Mock":`${h.exam} ${h.subject}`}</div><div style={{fontSize:11,color:C.muted}}>{h.type==="quiz"&&`${h.qtype==="year"?h.year:"Random"} · `}{dateStr(h.timestamp)}</div></div><div style={{textAlign:"right",flexShrink:0}}>{h.type==="cbt"?<div style={{fontWeight:900,fontSize:15,color:C.purple}}>{h.jambScore}<span style={{fontSize:10,color:C.muted}}>/400</span></div>:<div style={{fontWeight:900,fontSize:15,color:grade.c}}>{h.pct}%</div>}{grade&&<div style={{fontSize:10,color:grade.c}}>Grade {grade.g}</div>}</div></div>);})}</Card>
-            <a href={`https://wa.me/?text=${encodeURIComponent(`📊 My ExamAce AI Progress Report\n━━━━━━━━━━━━\n🔥 Study Streak: ${streak.count} days\n📝 Quizzes: ${quizHistory.length} · Avg: ${avgScore}% · Best: ${bestScore}%\n🖥️ JAMB CBT: ${cbtHistory.length} attempts${cbtHistory.length>0?`\n🎯 Best JAMB: ${bestJAMB}/400`:""}\n\nPrepared with ExamAce AI 🏆 🇳🇬`)}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:C.wa,borderRadius:13,padding:"14px 0",color:"#fff",fontWeight:800,fontSize:14,textDecoration:"none",marginTop:4}}>💬 Share Progress on WhatsApp</a>
+            <a href={`https://wa.me/?text=${encodeURIComponent(`📊 My ExamAce AI Progress Report\n━━━━━━━━━━━━\n🔥 Study Streak: ${streak.count} days\n📝 Quizzes: ${quizHistory.length} · Avg: ${avgScore}% · Best: ${bestScore}%\n🖥️ JAMB CBT: ${cbtHistory.length} attempts${cbtHistory.length>0?"\n🎯 Best JAMB: "+bestJAMB+"/400":""}\n\nPrepared with ExamAce AI 🏆 🇳🇬`)}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:C.wa,borderRadius:13,padding:"14px 0",color:"#fff",fontWeight:800,fontSize:14,textDecoration:"none",marginTop:4}}>💬 Share Progress on WhatsApp</a>
           </>
         )}
       </div>
@@ -682,7 +682,7 @@ function JambCBT({ onSaveHistory }) {
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
               <div>
                 <div style={{fontSize:11,fontWeight:800,color:C.purple}}>{subjects[curSubj]} · Question {curQ+1} of {getQCount(subjects[curSubj])}</div>
-                {q.topic&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>Topic: {q.topic}{q.year&&q.year!=="Past"?` · JAMB ${q.year}`:""}</div>}
+                {q.topic&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>Topic: {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</div>}
                 <div style={{marginTop:3}}><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div>
               </div>
               <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{isFlagged?"🚩 Flagged":"🏳️ Flag"}</button>
@@ -755,7 +755,7 @@ function JambCBT({ onSaveHistory }) {
                 <button key={s} onClick={()=>setReviewing(reviewing===s?null:s)} style={{background:reviewing===s?C.purple+"22":"transparent",border:`1px solid ${reviewing===s?C.purple:C.border}`,borderRadius:20,padding:"5px 12px",color:reviewing===s?C.purple:C.muted,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{s.split(" ")[0]} ({(allQs[s]||[]).filter((_,i)=>answers[s]?.[i]!==allQs[s]?.[i]?.answer).length} wrong)</button>
               ))}
             </div>
-            {reviewing&&(allQs[reviewing]||[]).map((q,i)=>{const userAns=answers[reviewing]?.[i];if(userAns===q.answer)return null;return(<div key={i} style={{background:C.red+"11",border:`1px solid ${C.red}33`,borderRadius:10,padding:12,marginBottom:8}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}><span style={{fontSize:11,color:C.muted}}>Q{i+1} · {q.topic}{q.year&&q.year!=="Past"?` · JAMB ${q.year}`:""}</span><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div><div style={{fontSize:13,color:C.textLight,marginBottom:6,lineHeight:1.5}}>{q.q}</div><div style={{fontSize:12,color:C.red,marginBottom:4}}>Your answer: <b>{userAns||"Not answered"}</b> · Correct: <b style={{color:C.green}}>{q.answer}</b></div><div style={{fontSize:12,color:C.sky,lineHeight:1.6}}>{q.explanation}</div></div>);})}
+            {reviewing&&(allQs[reviewing]||[]).map((q,i)=>{const userAns=answers[reviewing]?.[i];if(userAns===q.answer)return null;return(<div key={i} style={{background:C.red+"11",border:`1px solid ${C.red}33`,borderRadius:10,padding:12,marginBottom:8}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}><span style={{fontSize:11,color:C.muted}}>Q{i+1} · {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</span><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div><div style={{fontSize:13,color:C.textLight,marginBottom:6,lineHeight:1.5}}>{q.q}</div><div style={{fontSize:12,color:C.red,marginBottom:4}}>Your answer: <b>{userAns||"Not answered"}</b> · Correct: <b style={{color:C.green}}>{q.answer}</b></div><div style={{fontSize:12,color:C.sky,lineHeight:1.6}}>{q.explanation}</div></div>);})}
           </Card>
 
           <div style={{display:"flex",gap:8}}>
@@ -823,7 +823,7 @@ function Quiz({ onSaveHistory }) {
 
       // Show source info
       const src = meta.alocCount > 0
-        ? (meta.aiCount > 0 ? `ALOC+AI` : "ALOC")
+        ? (meta.aiCount > 0 ? "ALOC+AI" : "ALOC")
         : "AI";
       setAiSource(src);
 
@@ -857,7 +857,7 @@ function Quiz({ onSaveHistory }) {
     if(wrong.length>0){
       setCoachLoading(true);
       try{
-        const {text}=await callAI(`Nigerian student scored ${score}/${qs.length} (${pct}%) in ${exam} ${subject}${qtype==="year"?` (${year} paper)":""}.
+        const {text}=await callAI(`Nigerian student scored ${score}/${qs.length} (${pct}%) in ${exam} ${subject}${qtype==="year"?" ("+year+" paper)":""}.
 Missed topics: ${[...new Set(wrong.map(w=>w.topic))].filter(Boolean).join(", ")}.
 Write a 100-word WhatsApp-style coaching note:
 - Start with their grade using Nigerian grading (A1=75%+, B2=65%+, C4=55%+, etc.)
@@ -935,7 +935,7 @@ Keep it warm and Nigeria-context aware.`);
           </Card>
 
           <Btn onClick={start} loading={loading} color={C.blue} tc="#fff">
-            {qtype==="year"?`📅 Start ${exam} ${year} Quiz`:"🎲 Start Random Practice"}
+            {qtype==="year"?"📅 Start "+exam+" "+year+" Quiz":"🎲 Start Random Practice"}
           </Btn>
         </>
       )}
@@ -952,7 +952,7 @@ Keep it warm and Nigeria-context aware.`);
 
           <Card style={{background:C.blue+"11",borderColor:C.blue+"44"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-              <div style={{fontSize:11,fontWeight:800,color:C.blue}}>{exam} {q.year||year} · {subject}{q.difficulty?` · ${q.difficulty}`:""}</div>
+              <div style={{fontSize:11,fontWeight:800,color:C.blue}}>{exam} {q.year||year} · {subject}{q.difficulty?" · "+q.difficulty:""}</div>
               <AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/>
             </div>
             <div style={{fontSize:15,fontWeight:700,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
@@ -975,7 +975,7 @@ Keep it warm and Nigeria-context aware.`);
             <div style={{marginTop:14,animation:"fadeUp .35s ease"}}>
               <Card style={{background:sel===q.answer?C.green+"18":C.red+"18",borderColor:sel===q.answer?C.green:C.red}}>
                 <div style={{fontWeight:800,fontSize:14,color:sel===q.answer?C.green:C.red,marginBottom:6}}>
-                  {sel===q.answer?"✅ Correct!":sel===null?`⏰ Time's up! Correct: ${q.answer}`:`❌ Wrong. Correct answer: ${q.answer}`}
+                  {sel===q.answer?"✅ Correct!":sel===null?"⏰ Time's up! Correct: "+q.answer:"❌ Wrong. Correct answer: "+q.answer}
                 </div>
                 <div style={{fontSize:13,color:C.textLight,lineHeight:1.7}}>{q.explanation}</div>
               </Card>
@@ -1061,14 +1061,14 @@ function AskAI() {
     const msg=input.trim();
     if(!msg&&!imgData)return;
     const yr=msg.match(/\b(19|20)\d{2}\b/)?.[0]||year;
-    const display=imgPreview?(msg?`📷 [Photo]\n${msg}`:"📷 [Question photo]"):msg;
+    const display=imgPreview?(msg?"📷 [Photo]\n"+msg:"📷 [Question photo]"):msg;
     setMsgs(m=>[...m,{from:"user",text:display,time:ts(),img:imgPreview}]);
     setInput("");setImgPreview(null);setLoading(true);
     try{
       let text,source;
       if(imgData){
         const r=await callAI(
-          `You are an official ${exam} examiner for ${subject}${yr?` (${yr} style)`:""}.
+          `You are an official ${exam} examiner for ${subject}${yr?" ("+yr+" style)":""}.
 Read ALL question(s) in this image carefully.
 
 **QUESTION READ:** [restate the question exactly]
@@ -1118,7 +1118,7 @@ ${NG_CONTEXT}`,
         <div style={{background:C.waD,padding:"11px 14px",display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:36,height:36,background:C.wa,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
           <div>
-            <div style={{fontWeight:700,fontSize:13,color:"#fff"}}>ExamAce AI · {exam} {subject}{year?` · ${year}`:""}</div>
+            <div style={{fontWeight:700,fontSize:13,color:"#fff"}}>ExamAce AI · {exam} {subject}{year?" · "+year:""}</div>
             <div style={{fontSize:10,color:"#b2dfdb"}}>Nigeria Curriculum · 4-AI System · 📷 Snap enabled</div>
           </div>
         </div>
@@ -1179,7 +1179,7 @@ function SnapSolve() {
     setLoading(true);setAnswer("");setAiSource("");
     try{
       const {text,source}=await callAI(
-        `You are an official ${exam} examiner${subject?` for ${subject}`:""}${year?` (${year} marking scheme)`:""}.
+        `You are an official ${exam} examiner${subject?" for "+subject:""}${year?" ("+year+" marking scheme)":""}.
 ${NG_CONTEXT}
 
 Read ALL question(s) in this image carefully and provide:
@@ -1194,7 +1194,7 @@ Read ALL question(s) in this image carefully and provide:
 **🎯 MARKS ALLOCATION:** [how ${exam} awards marks for this]
 **⚠️ COMMON MISTAKES:** [what students get wrong in exams]
 **💡 EXAMINER TIP:** [insider tip from ${exam} marking scheme]
-${note?`\nStudent's note: "${note}"`:""}`,
+${note?"\nStudent's note: \""+note+"\"":""}`,
         null, imgData
       );
       setAnswer(text);setAiSource(source);
@@ -1263,42 +1263,7 @@ function EssayMarker() {
 
   const onImg = async f=>{if(!f)return;setImgPreview(URL.createObjectURL(f));setImgData({data:await toBase64(f),type:f.type||"image/jpeg"});};
 
-  const WAEC_SCHEME = `**${exam} ESSAY MARKING SCHEME${year?` (${year})`:""} — Official Nigerian Standard**
-━━━━━━━━━━━━━━━━━━━━━━━
-**CONTENT SCORE: [X]/10**
-[Relevance to topic, factual accuracy, Nigerian context, depth of ideas]
-
-**ORGANISATION SCORE: [X]/10**
-[Introduction, body paragraphs, conclusion, logical flow, paragraph unity]
-
-**EXPRESSION SCORE: [X]/10**
-[Clarity, sentence variety, register, vocabulary richness, style]
-
-**MECHANICS SCORE: [X]/10**
-[Spelling, punctuation, grammar, agreement, tenses]
-
-**━━━━━━━━━━━━━━━━━━━━━━━**
-**TOTAL: [X]/40 — ${exam} Grade: [A1/B2/B3/C4/C5/C6/D7/E8/F9]**
-**━━━━━━━━━━━━━━━━━━━━━━━**
-
-**✅ STRENGTHS (with quoted examples from essay):**
-1. [Quote + explanation]
-2. [Quote + explanation]
-
-**❌ ERRORS & CORRECTIONS:**
-1. Error: "[quote]" → Correction: "[fix]" (Reason: [grammar rule])
-2. [Continue for up to 5 errors]
-
-**🎯 HOW TO REACH A1 IN ${exam}:**
-1. [Specific actionable tip]
-2. [Specific actionable tip]
-3. [Specific actionable tip]
-
-**✍️ IMPROVED OPENING SENTENCE:**
-"[Rewrite opening to A1 standard]"
-
-**💡 ${exam} EXAMINER SECRET:**
-[What examiners look for that students miss]`;
+  const WAEC_SCHEME = `**${exam} ESSAY MARKING SCHEME${year?" ("+year+")":""} — Official Nigerian Standard**\n━━━━━━━━━━━━━━━━━━━━━━━\n**CONTENT SCORE: [X]/10**\n[Relevance to topic, factual accuracy, Nigerian context, depth of ideas]\n\n**ORGANISATION SCORE: [X]/10**\n[Introduction, body paragraphs, conclusion, logical flow, paragraph unity]\n\n**EXPRESSION SCORE: [X]/10**\n[Clarity, sentence variety, register, vocabulary richness, style]\n\n**MECHANICS SCORE: [X]/10**\n[Spelling, punctuation, grammar, agreement, tenses]\n\n**━━━━━━━━━━━━━━━━━━━━━━━**\n**TOTAL: [X]/40 — ${exam} Grade: [A1/B2/B3/C4/C5/C6/D7/E8/F9]**\n**━━━━━━━━━━━━━━━━━━━━━━━**\n\n**✅ STRENGTHS (with quoted examples from essay):**\n1. [Quote + explanation]\n2. [Quote + explanation]\n\n**❌ ERRORS & CORRECTIONS:**\n1. Error: "[quote]" → Correction: "[fix]" (Reason: [grammar rule])\n2. [Continue for up to 5 errors]\n\n**🎯 HOW TO REACH A1 IN ${exam}:**\n1. [Specific actionable tip]\n2. [Specific actionable tip]\n3. [Specific actionable tip]\n\n**✍️ IMPROVED OPENING SENTENCE:**\n"[Rewrite opening to A1 standard]"\n\n**💡 ${exam} EXAMINER SECRET:**`;
 
   const mark = async () => {
     setLoading(true);setResult("");setAiSource("");
@@ -1306,14 +1271,14 @@ function EssayMarker() {
       let text,source;
       if(mode==="image"){
         if(!imgData){alert("Upload essay image!");setLoading(false);return;}
-        const r=await callAI(`You are a strict official ${exam} ${subject} examiner${year?` (${year} marking scheme)`:""}.
+        const r=await callAI(`You are a strict official ${exam} ${subject} examiner${year?" ("+year+" marking scheme)":""}.
 Read the handwritten essay in this image carefully and mark using this OFFICIAL ${exam} MARKING SCHEME:
 ${WAEC_SCHEME}
 ${NG_CONTEXT}`,null,imgData);
         text=r.text;source=r.source;
       }else{
         if(wc<30){alert("Write at least 30 words!");setLoading(false);return;}
-        const r=await callAI(`You are a strict official ${exam} ${subject} examiner${year?` (${year})`:""}.
+        const r=await callAI(`You are a strict official ${exam} ${subject} examiner${year?" ("+year+")":""}.
 Mark this essay using OFFICIAL ${exam} MARKING SCHEME.
 
 ESSAY TOPIC: "${topic||"General Essay"}"
@@ -1417,7 +1382,7 @@ function StudyTools() {
   const syllabusStr = SYLLABUS[subject]?.join(", ") || "all topics";
 
   const PROMPTS = {
-    keypoints: ()=>`Generate KEY POINTS for ${exam} ${subject}${topic?` — ${topic}`:""}${year?` (${year} style)`:""}.
+    keypoints: ()=>`Generate KEY POINTS for ${exam} ${subject}${topic?" — "+topic:""}${year?" ("+year+" style)":""}.
 ${NG_CONTEXT}
 High-frequency topics to emphasise: ${hotTopicsStr}
 
@@ -1430,7 +1395,7 @@ For each key point:
 
 Include 8-10 points. Reference official WAEC/NECO/JAMB syllabus.`,
 
-    definitions: ()=>`Generate GLOSSARY for ${exam} ${subject}${topic?` — ${topic}`:""}.
+    definitions: ()=>`Generate GLOSSARY for ${exam} ${subject}${topic?" — "+topic:""}.
 ${NG_CONTEXT}
 
 For each term:
@@ -1441,11 +1406,11 @@ For each term:
 
 Include 12-15 terms. Mark ⭐⭐⭐ for terms in 3+ consecutive years.`,
 
-    focusareas: ()=>`CRITICAL FOCUS AREAS for ${exam} ${subject}${year?` ${year}`:""}.
+    focusareas: ()=>`CRITICAL FOCUS AREAS for ${exam} ${subject}${year?" "+year:""}.
 ${NG_CONTEXT}
 
 🔴 **MUST-KNOW (guaranteed marks):**
-${hotTopicsStr?`High-frequency: ${hotTopicsStr}`:"[list top 5 guaranteed topics with % likelihood]"}
+${hotTopicsStr?"High-frequency: "+hotTopicsStr:"[list top 5 guaranteed topics with % likelihood]"}
 
 🟡 **HIGH PRIORITY:**
 [8 topics most likely to appear]
@@ -1484,17 +1449,7 @@ Sunday: REST + light revision only
 💡 3 STUDY TIPS specific to ${exam} ${subject}
 📱 How to use ExamAce AI daily`,
 
-    mnemonics: ()=>`MEMORY TRICKS & MNEMONICS for ${exam} ${subject}${topic?` — ${topic}`:""}.
-${NG_CONTEXT}
-
-For each concept:
-💡 **[CONCEPT NAME]**
-🎯 What to remember: [key fact]
-🧠 Memory trick: [mnemonic/rhyme/acronym]
-🇳🇬 Nigerian angle: [Nigerian example to anchor memory]
-📝 How it appears in ${exam}: [exam application]
-
-Include 6-8 tricks. Use Nigerian names, places, foods, culture where possible to make memory sticks.`,
+    mnemonics: ()=>`MEMORY TRICKS & MNEMONICS for ${exam} ${subject}${topic?" — "+topic:""}.\n${NG_CONTEXT}\n\nFor each concept:\n💡 **[CONCEPT NAME]**\n🎯 What to remember: [key fact]\n🧠 Memory trick: [mnemonic/rhyme/acronym]\n🇳🇬 Nigerian angle: [Nigerian example to anchor memory]\n📝 How it appears in ${exam}: [exam application]\n`,
 
     examstrategy: ()=>`COMPLETE EXAM STRATEGY for ${exam} ${subject}.
 ${NG_CONTEXT}
