@@ -22,9 +22,7 @@ const C = {
 // All AI calls go through the backend which handles: Gemini → DeepSeek → Groq → Claude
 // ═══════════════════════════════════════════════════════════════════════════
 // Auto-detect backend: same origin in production (Render), localhost in dev
-const BACKEND = (typeof window !== "undefined" && window.location.hostname !== "localhost")
-  ? ""          // same-origin: frontend & backend on same Render service
-  : "https://examace-backend.onrender.com";
+const BACKEND = "https://examace-backend.onrender.com";
 
 const callAI = async (messages, system, imgData) => {
   const body = { messages, system, imgData };
