@@ -2585,163 +2585,135 @@ D7-F9 (below 45%): [X]%
     setLoading(false);
   };
 
-  const dueCount = getDueReviews().length;
+  const dueCount  = getDueReviews().length;
   const weakCount = getWeakTopics().length;
 
+  // Only tools that directly improve exam performance — nothing decorative
   const TOOLS=[
-    {id:"keypoints",  icon:"📌", label:"Key Points",   color:C.gold},
-    {id:"definitions",icon:"📖", label:"Glossary",     color:C.sky},
-    {id:"focusareas", icon:"🎯", label:"Focus Areas",  color:C.red},
-    {id:"mnemonics",  icon:"🧠", label:"Mnemonics",    color:C.pink},
-    {id:"timetable",  icon:"📅", label:"Timetable",    color:C.green},
-    {id:"examstrategy",icon:"🏆",label:"Strategy",     color:C.purple},
-    {id:"maths",      icon:"📐", label:"Maths Solver", color:C.blue},
-    {id:"predict",    icon:"📈", label:"Predict Grade",color:C.orange},
-    {id:"countdown",  icon:"⏰", label:"Countdown",    color:C.green},
-    {id:"review",     icon:"🔁", label:"Due Reviews",  color:C.purple, badge:dueCount},
-    {id:"weakness",   icon:"💪", label:"Weak Topics",  color:C.red,    badge:weakCount},
+    {
+      id:"review", icon:"🔁", label:"Review Wrong Answers",
+      desc: dueCount>0 ? `${dueCount} question${dueCount>1?"s":""} due for review today` : "No reviews due — check back after your next quiz",
+      color:C.purple, badge:dueCount,
+      detail:"Questions you got wrong come back after 1, 3, 7 and 14 days so you never forget them",
+    },
+    {
+      id:"weakness", icon:"💪", label:"Drill Weak Topics",
+      desc: weakCount>0 ? `${weakCount} topic${weakCount>1?"s":""} below 50% accuracy — tap to drill` : "Complete more quizzes to discover your weak areas",
+      color:C.red, badge:weakCount,
+      detail:"Focused practice on topics where you score below 50% — fastest way to improve",
+    },
+    {
+      id:"focusareas", icon:"🎯", label:"What to Focus On",
+      desc:"AI identifies the highest-frequency topics for your exam and subject",
+      color:C.orange,
+      detail:"Know exactly what to study — AI analyses past WAEC/JAMB papers and tells you which topics appear most",
+    },
+    {
+      id:"keypoints", icon:"📌", label:"Key Points Summary",
+      desc:"Quick revision notes for any topic — perfect for the night before",
+      color:C.gold,
+      detail:"AI generates concise bullet-point revision notes tailored to WAEC/NECO/JAMB syllabus",
+    },
+    {
+      id:"mnemonics", icon:"🧠", label:"Memory Tricks",
+      desc:"Tricks and shortcuts to remember difficult topics and formulas",
+      color:C.pink,
+      detail:"AI creates memorable acronyms, rhymes and visual tricks specific to Nigerian exam topics",
+    },
   ];
   const at=TOOLS.find(t=>t.id===sub);
 
   return (
     <div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:16}}>
-        {TOOLS.map(t=>(
-          <button key={t.id} onClick={()=>{setSub(t.id);setOut("");setAiSource("");}} style={{background:sub===t.id?t.color+"22":C.card,border:`1.5px solid ${sub===t.id?t.color:C.border}`,borderRadius:12,padding:"10px 4px",color:sub===t.id?t.color:C.muted,fontWeight:sub===t.id?800:400,fontSize:9,cursor:"pointer",fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative"}}>
-            {t.badge>0&&<span style={{position:"absolute",top:4,right:4,background:t.color,color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.badge>9?"9+":t.badge}</span>}
-            <span style={{fontSize:22}}>{t.icon}</span>{t.label}
-          </button>
-        ))}
-      </div>
+      {/* Tool header */}
+      {!sub&&(
+        <Card style={{background:C.card2,marginBottom:12}}>
+          <div style={{fontWeight:800,fontSize:15,color:C.textLight,marginBottom:4}}>🛠️ Study Tools</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>Five tools that directly improve your exam performance. Tap any tool to get started.</div>
+        </Card>
+      )}
 
-      {/* Standard tools */}
-      {["keypoints","definitions","focusareas","mnemonics","timetable","examstrategy"].includes(sub)&&(
-        <>
-          <Card>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-              <div><Label>Exam</Label><Sel value={exam} onChange={setExam} options={EXAMS} placeholder="Exam"/></div>
-              <div><Label>Year</Label><Sel value={year} onChange={setYear} options={YEARS} placeholder="Any"/></div>
-            </div>
-            <Label>Subject</Label>
-            <Sel value={subject} onChange={setSubject} options={SUBJECTS} placeholder="Select subject"/>
-            {["keypoints","definitions","mnemonics"].includes(sub)&&subject&&SYLLABUS[subject]&&(
-              <div style={{marginTop:10}}><Label>Topic (optional)</Label><Pills options={SYLLABUS[subject]} value={topic} onChange={v=>setTopic(topic===v?"":v)} color={at?.color}/></div>
-            )}
-            {/* Show hot topics */}
-            {subject&&JAMB_HOT_TOPICS[subject]&&sub==="focusareas"&&(
-              <div style={{marginTop:8,background:C.red+"11",borderRadius:8,padding:"8px 10px"}}>
-                <div style={{fontSize:10,color:C.red,fontWeight:800,marginBottom:4}}>🔥 Known high-frequency {exam} {subject} topics:</div>
-                {JAMB_HOT_TOPICS[subject].slice(0,4).map((t,i)=><div key={i} style={{fontSize:11,color:C.muted,lineHeight:1.6}}>• {t}</div>)}
+      {/* Tool list — card style, not icon grid */}
+      {!sub&&(
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:4}}>
+          {TOOLS.map(t=>(
+            <button key={t.id} onClick={()=>{setSub(t.id);setOut("");setAiSource("");}}
+              style={{background:C.card,border:`1px solid ${t.badge>0?t.color+"55":C.border}`,borderRadius:14,padding:"14px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:12,width:"100%",transition:"border-color .2s"}}>
+              <div style={{width:44,height:44,background:t.color+"18",border:`1px solid ${t.color}33`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0,position:"relative"}}>
+                {t.icon}
+                {t.badge>0&&<span style={{position:"absolute",top:-5,right:-5,background:t.color,color:"#fff",borderRadius:"50%",width:17,height:17,fontSize:9,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.badge>9?"9+":t.badge}</span>}
               </div>
-            )}
-          </Card>
-          <Btn onClick={run} loading={loading} color={at?.color||C.gold} tc={at?.id==="keypoints"?"#000":"#fff"}>
-            {at?.icon} Generate {at?.label}
-          </Btn>
-        </>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:14,color:t.badge>0?t.color:C.textLight,marginBottom:3}}>{t.label}</div>
+                <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>{t.desc}</div>
+              </div>
+              <div style={{fontSize:16,color:C.muted,flexShrink:0}}>→</div>
+            </button>
+          ))}
+        </div>
       )}
 
-      {/* Maths solver */}
-      {sub==="maths"&&(
-        <>
-          <Card style={{borderColor:C.blue+"44"}}>
-            <div style={{fontWeight:900,fontSize:15,color:C.blue,marginBottom:8}}>📐 Step-by-Step Maths Solver</div>
-            <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Works for WAEC/JAMB/NECO mathematics — shows full marking-scheme working</div>
-            <Inp value={problem} onChange={setProblem} multiline rows={4} placeholder={"Examples:\n• Solve 2x² + 5x - 3 = 0 using factorisation\n• Find simple interest on ₦50,000 at 8% for 3 years\n• Evaluate log₂8 + log₂4"}/>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
-              {["Solve x²-5x+6=0","SI on ₦20,000 at 5% for 2 years","Evaluate log₃81","Factorize 6x²+x-2","Find area of circle r=7cm"].map(e=>(
-                <button key={e} onClick={()=>setProblem(e)} style={{background:C.blue+"18",border:`1px solid ${C.blue}33`,borderRadius:20,padding:"4px 10px",color:C.sky,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{e}</button>
-              ))}
+      {/* Active tool — show back button */}
+      {sub&&(
+        <button onClick={()=>{setSub("");setOut("");}} style={{background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0",display:"flex",alignItems:"center",gap:4}}>
+          ← Back to tools
+        </button>
+      )}
+
+      {/* ── TOOL CONTENT ─────────────────────────────────────────────── */}
+
+      {/* Focus areas, Key points, Mnemonics — need subject/topic selectors */}
+      {["focusareas","keypoints","mnemonics"].includes(sub)&&(
+        <Card>
+          {/* What this tool does — plain English for any ICT level */}
+          <div style={{background:at?.color+"11",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+            <div style={{fontSize:12,color:at?.color,fontWeight:700,marginBottom:2}}>{at?.icon} {at?.label}</div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>{at?.detail}</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+            <div><Label>Your exam</Label><Sel value={exam} onChange={setExam} options={EXAMS} placeholder="Select exam"/></div>
+            <div><Label>Your subject</Label><Sel value={subject} onChange={setSubject} options={SUBJECTS} placeholder="Select subject"/></div>
+          </div>
+          {subject&&SYLLABUS[subject]&&(
+            <div style={{marginTop:4}}>
+              <Label>Topic <span style={{color:C.sub,fontWeight:400}}>(optional — leave blank for full subject)</span></Label>
+              <Pills options={SYLLABUS[subject]} value={topic} onChange={v=>setTopic(topic===v?"":v)} color={at?.color}/>
             </div>
-          </Card>
-          <Btn onClick={solveMaths} loading={loading} color={C.blue} tc="#fff">📐 Solve with Full Working</Btn>
-        </>
-      )}
-
-      {/* Grade predictor */}
-      {sub==="predict"&&(
-        <>
-          <Card style={{borderColor:C.orange+"44"}}>
-            <div style={{fontWeight:900,fontSize:15,color:C.orange,marginBottom:8}}>📈 Nigerian Exam Grade Predictor</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-              <div><Label>Exam</Label><Pills options={EXAMS} value={exam} onChange={setExam} color={C.orange}/></div>
-              <div><Label>Subject</Label><Sel value={subject} onChange={setSubject} options={SUBJECTS} placeholder="Subject"/></div>
+          )}
+          {subject&&JAMB_HOT_TOPICS[subject]&&sub==="focusareas"&&(
+            <div style={{marginTop:10,background:C.red+"11",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:C.red,fontWeight:800,marginBottom:4}}>🔥 High-frequency {exam} {subject} topics:</div>
+              {JAMB_HOT_TOPICS[subject].slice(0,5).map((t,i)=><div key={i} style={{fontSize:12,color:C.muted,lineHeight:1.7}}>• {t}</div>)}
             </div>
-            <Label>Your Current Practice Score (%)</Label>
-            <Inp value={pScore} onChange={setPScore} type="number" placeholder="e.g. 65"/>
-          </Card>
-          <Card>
-            <Label>Topics You've Covered</Label>
-            <Inp value={pTopics} onChange={setPTopics} placeholder="e.g. Algebra, Statistics, Trigonometry..."/>
-          </Card>
-          <Card>
-            <Label>Weeks Until Your Exam</Label>
-            <Pills options={["2","4","6","8","10","12"]} value={pWeeks} onChange={setPWeeks} color={C.orange}/>
-          </Card>
-          <Btn onClick={predict} loading={loading} color={C.orange} tc="#fff">📈 Predict My Grade</Btn>
-        </>
+          )}
+          <div style={{marginTop:12}}>
+            <Btn onClick={run} loading={loading} color={at?.color||C.gold} tc="#fff">
+              {loading?"Generating...":at?.icon+" Generate "+at?.label}
+            </Btn>
+          </div>
+        </Card>
       )}
 
-      {/* Countdown */}
-      {sub==="countdown"&&(
-        <>
-          <Card style={{borderColor:C.green+"44"}}>
-            <div style={{fontWeight:900,fontSize:15,color:C.green,marginBottom:4}}>⏰ Live Exam Countdown</div>
-            <div style={{fontSize:12,color:C.muted}}>Track how much time you have left to prepare</div>
-          </Card>
-          <Card><Label>Select Exam</Label><Pills options={Object.keys(EXAM_DATES)} value={cdExam} onChange={setCdExam} color={C.green}/></Card>
-          {d?(
-            <>
-              <Card style={{background:`linear-gradient(135deg,${u.c}11,${C.card})`,borderColor:u.c+"44",textAlign:"center"}}>
-                <div style={{background:u.c+"22",color:u.c,borderRadius:20,padding:"4px 14px",fontSize:11,fontWeight:800,display:"inline-block",marginBottom:12}}>{u.l}</div>
-                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{cdExam} · {EXAM_DATES[cdExam].toLocaleDateString("en-NG",{day:"numeric",month:"long",year:"numeric"})}</div>
-                <div style={{display:"flex",justifyContent:"center",gap:12}}>
-                  {[["DAYS",d.days],["HRS",d.hours],["MIN",d.mins],["SEC",d.secs]].map(([l,v])=>(
-                    <div key={l} style={{textAlign:"center"}}>
-                      <div style={{background:C.card2,border:`2px solid ${u.c}44`,borderRadius:14,width:68,height:68,display:"flex",alignItems:"center",justifyContent:"center",fontSize:l==="DAYS"?28:22,fontWeight:900,color:l==="DAYS"?u.c:C.textLight}}>{String(v).padStart(2,"0")}</div>
-                      <div style={{fontSize:9,color:C.muted,marginTop:5,fontWeight:700,letterSpacing:1.5}}>{l}</div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-              <Card style={{background:C.green+"11",borderColor:C.green+"33"}}>
-                <Label c={C.green}>📅 Study Pace Recommendation</Label>
-                <div style={{fontSize:13,color:C.green,lineHeight:1.8}}>
-                  {d.days<=7?"🔴 Final week! Attempt ONLY past questions — no new topics!"
-                    :d.days<=14?"🔴 Final 2 weeks — revisit weak areas and past questions ONLY"
-                    :d.days<=30?"🟡 Final month: 2+ topics/day, mock test every 3 days, use ExamAce AI daily"
-                    :d.days<=60?"🟢 2 months: 1 topic/day + 30 past questions daily, weekly mocks"
-                    :"✅ Plenty of time: build strong foundations, textbook first, then past questions"}
-                </div>
-              </Card>
-            </>
-          ):<Card style={{textAlign:"center"}}><div style={{fontSize:32}}>🏁</div><div style={{fontWeight:700,marginTop:8,color:C.textLight}}>Exam date has passed</div></Card>}
-          <Card>
-            <Label>All Upcoming Exams</Label>
-            {Object.entries(EXAM_DATES).map(([name,date])=>{const d2=diff(date),u2=d2?urg(d2.days):null;return(<div key={name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${C.border}`}}><div><div style={{fontWeight:700,fontSize:13,color:C.textLight}}>{name}</div><div style={{fontSize:11,color:C.muted}}>{date.toLocaleDateString("en-NG",{day:"numeric",month:"short",year:"numeric"})}</div></div>{d2?<div style={{textAlign:"right"}}><div style={{fontWeight:900,color:u2.c,fontSize:15}}>{d2.days}d</div><div style={{fontSize:10,color:u2.c}}>{u2.l}</div></div>:<span style={{color:C.muted,fontSize:12}}>Passed</span>}</div>);})}
-          </Card>
-        </>
-      )}
-
-      {/* ── SPACED REPETITION REVIEW PANEL */}
+      {/* Spaced repetition reviews */}
       {sub==="review"&&<ReviewPanel/>}
 
-      {/* ── WEAKNESS DRILL PANEL */}
+      {/* Weakness drill */}
       {sub==="weakness"&&<WeaknessPanel/>}
 
-            {/* Output */}
-      {out&&["keypoints","definitions","focusareas","mnemonics","timetable","examstrategy","maths","predict"].includes(sub)&&(
+      {/* AI output */}
+      {out&&["focusareas","keypoints","mnemonics"].includes(sub)&&(
         <>
           <Out text={out} color={at?.color||C.gold} source={aiSource}/>
           <div style={{display:"flex",gap:8,marginTop:10}}>
-            <button onClick={()=>navigator.clipboard.writeText(out)} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 0",color:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy</button>
-            <a href={`https://wa.me/?text=${encodeURIComponent(`🏆 ExamAce AI — ${at?.label}\n${exam} ${subject} ${year||""}\n\n${out.slice(0,400)}...\n\nExamAce AI 🇳🇬`)}`} target="_blank" rel="noreferrer" style={{flex:1,background:C.wa,borderRadius:10,padding:"10px 0",color:"#fff",fontWeight:700,fontSize:12,textAlign:"center",textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>💬 Share</a>
+            <button onClick={()=>navigator.clipboard.writeText(out)} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 0",color:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy Notes</button>
+            <button onClick={()=>{const t="🏆 ExamAce AI — "+at?.label+"\n"+exam+" "+subject+" "+(year||"")+"\n\n"+out.slice(0,400)+"...\n\nExamAce AI 🇳🇬";if(navigator.share)navigator.share({title:"ExamAce AI",text:t});else navigator.clipboard.writeText(t);}} style={{flex:1,background:C.wa,borderRadius:10,padding:"10px 0",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>💬 Share</button>
           </div>
         </>
       )}
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // XP TOAST — floats up when XP is earned
@@ -3199,47 +3171,81 @@ function PracticeHub({ onSaveHistory }) {
 // LEARN HUB — Deep Learning + Study Tools + Career
 // ═══════════════════════════════════════════════════════════════════════════
 function LearnHub({ user }) {
-  const [mode,setMode] = useState("home"); // home | deeplearn | studytools | career
+  const [mode,setMode] = useState("home"); // home | deeplearn | studytools
 
-  if(mode==="deeplearn")  return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back</button><DeepLearnMode/></div>;
-  if(mode==="studytools") return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back</button><StudyTools/></div>;
-  if(mode==="career")     return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back</button><CareerCounsellor user={user}/></div>;
+  if(mode==="deeplearn")  return(
+    <div>
+      <button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 14px 0",display:"flex",alignItems:"center",gap:6}}>
+        ← Back to Learn
+      </button>
+      <DeepLearnMode/>
+    </div>
+  );
+  if(mode==="studytools") return(
+    <div>
+      <button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 14px 0",display:"flex",alignItems:"center",gap:6}}>
+        ← Back to Learn
+      </button>
+      <StudyTools/>
+    </div>
+  );
 
   const dueReviews = getDueReviews().length;
+  const weakTopics = getWeakTopics().length;
+  const lvl = getLevelClient(user?.xp||0);
 
   return(
     <div>
-      <div style={{marginBottom:16}}>
-        <div style={{fontWeight:900,fontSize:18,color:"#f1f5f9",marginBottom:2}}>Learn</div>
-        <div style={{fontSize:12,color:"#94a3b8"}}>AI-powered teaching · Career guidance · Study tools</div>
+      {/* Header */}
+      <div style={{marginBottom:20}}>
+        <div style={{fontWeight:900,fontSize:20,color:C.textLight,marginBottom:2}}>Learn 🎓</div>
+        <div style={{fontSize:12,color:C.muted}}>AI teacher · Study tools · Performance tracking</div>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        <button onClick={()=>setMode("deeplearn")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:48,height:48,background:"#14b8a622",border:"1px solid #14b8a633",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>🎓</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Deep Learning Mode</div>
-            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>AI teaches you any topic step-by-step with examples and quiz</div>
+
+      {/* Deep Learning — primary card, most prominent */}
+      <button onClick={()=>setMode("deeplearn")} style={{width:"100%",background:`linear-gradient(135deg,${C.purple}22,${C.card})`,border:`1.5px solid ${C.purple}44`,borderRadius:18,padding:"20px 18px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",marginBottom:10,display:"flex",alignItems:"center",gap:14}}>
+        <div style={{width:52,height:52,background:C.purple+"33",border:`1px solid ${C.purple}55`,borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,flexShrink:0}}>🎓</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:900,fontSize:16,color:C.purple,marginBottom:3}}>Deep Learning Mode</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>AI teaches you any topic — explanation, worked example, quiz. Like having a private tutor.</div>
+          <div style={{marginTop:6,fontSize:11,color:C.purple,fontWeight:700}}>TAP TO START A LESSON →</div>
+        </div>
+      </button>
+
+      {/* Study Tools — show alert if reviews are due */}
+      <button onClick={()=>setMode("studytools")} style={{width:"100%",background:C.card,border:`1px solid ${dueReviews>0?C.gold+"66":C.border}`,borderRadius:16,padding:"16px 18px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",marginBottom:10,display:"flex",alignItems:"center",gap:14}}>
+        <div style={{width:48,height:48,background:C.gold+"22",border:`1px solid ${C.gold}33`,borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0,position:"relative"}}>
+          📚
+          {dueReviews>0&&<span style={{position:"absolute",top:-4,right:-4,background:C.purple,color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{dueReviews>9?"9+":dueReviews}</span>}
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:15,color:C.textLight,marginBottom:2}}>Study Tools</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>
+            {dueReviews>0&&<span style={{color:C.gold,fontWeight:700}}>🔁 {dueReviews} reviews due · </span>}
+            {weakTopics>0&&<span style={{color:C.red,fontWeight:700}}>💪 {weakTopics} weak topics · </span>}
+            Key points · Focus areas · Mnemonics
           </div>
-          <div style={{fontSize:18,color:"#94a3b8"}}>→</div>
-        </button>
-        <button onClick={()=>setMode("career")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:48,height:48,background:"#f9731622",border:"1px solid #f9731633",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>🧭</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Career Advisor</div>
-            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>University courses, JAMB requirements, career paths in Nigeria</div>
-          </div>
-          <div style={{fontSize:18,color:"#94a3b8"}}>→</div>
-        </button>
-        <button onClick={()=>setMode("studytools")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:48,height:48,background:"#f5c84222",border:"1px solid #f5c84233",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>📚</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Study Tools</div>
-            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>Key points · Mnemonics · Focus areas · Spaced reviews{dueReviews>0?` · ${dueReviews} due`:""}</div>
-          </div>
-          {dueReviews>0&&<div style={{background:"#a855f7",color:"#fff",borderRadius:"50%",width:20,height:20,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{dueReviews>9?"9+":dueReviews}</div>}
-          <div style={{fontSize:18,color:"#94a3b8",marginLeft:4}}>→</div>
-        </button>
-      </div>
+        </div>
+        <div style={{fontSize:18,color:C.muted}}>→</div>
+      </button>
+
+      {/* Progress snapshot */}
+      <Card style={{background:C.card2}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:10,textTransform:"uppercase",letterSpacing:1}}>📊 Your Progress</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          {[
+            ["Questions answered", user?.stats?.totalAnswered||0, C.blue],
+            ["Quizzes done",       user?.stats?.quizzesCompleted||0, C.green],
+            ["Current streak",    (user?.currentStreak||0)+" days", C.orange],
+            ["Level",             lvl.name, C.purple],
+          ].map(([label,val,color])=>(
+            <div key={label} style={{background:C.card,borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:C.sub,marginBottom:3}}>{label}</div>
+              <div style={{fontWeight:800,fontSize:14,color}}>{val}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -3840,35 +3846,64 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TODAY'S PROGRESS — stored in localStorage, resets at midnight
+// ═══════════════════════════════════════════════════════════════════════════
+const TODAY_KEY = () => `examace_today_${new Date().toDateString()}`;
+
+const getTodayProgress = () => {
+  try {
+    const raw = localStorage.getItem(TODAY_KEY());
+    return raw ? JSON.parse(raw) : { answered: 0, correct: 0, dailyDone: false };
+  } catch { return { answered: 0, correct: 0, dailyDone: false }; }
+};
+
+const updateTodayProgress = (answeredDelta, correctDelta, markDailyDone=false) => {
+  try {
+    const p = getTodayProgress();
+    p.answered  += answeredDelta;
+    p.correct   += correctDelta;
+    if (markDailyDone) p.dailyDone = true;
+    localStorage.setItem(TODAY_KEY(), JSON.stringify(p));
+    return p;
+  } catch { return getTodayProgress(); }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HOME SCREEN — Daily question + today's goal + quick actions
 // Shown as first tab. Designed for <30 second daily habit.
 // ═══════════════════════════════════════════════════════════════════════════
-function HomeScreen({ user, onNavigate }) {
-  const [dailyQ,setDailyQ]     = useState(null);
-  const [dailySel,setDailySel] = useState(null);
-  const [dailyDone,setDailyDone]= useState(false);
-  const [loading,setLoading]   = useState(true);
-  const subject = user?.subjects?.[0] || "Mathematics";
-  const exam    = user?.exam || "WAEC";
-  const lvl     = getLevelClient(user?.xp||0);
-  const stats   = user?.stats || {};
+function HomeScreen({ user, onNavigate, onAnswered }) {
+  const [dailyQ,setDailyQ]       = useState(null);
+  const [dailySel,setDailySel]   = useState(null);
+  const [dailyDone,setDailyDone] = useState(false);
+  const [loading,setLoading]     = useState(true);
+  const [todayProgress,setTodayProgress] = useState(()=>getTodayProgress());
+  const subject    = user?.subjects?.[0] || "Mathematics";
+  const exam       = user?.exam || "WAEC";
+  const lvl        = getLevelClient(user?.xp||0);
+  const stats      = user?.stats || {};
   const dueReviews = getDueReviews().length;
 
-  // Check if daily question already answered today
-  const DAILY_DONE_KEY = `examace_daily_done_${new Date().toDateString()}`;
-
   useEffect(()=>{
-    const done = localStorage.getItem(DAILY_DONE_KEY);
-    if(done){ setDailyDone(true); setLoading(false); return; }
+    const p = getTodayProgress();
+    setTodayProgress(p);
+    if(p.dailyDone){ setDailyDone(true); setLoading(false); return; }
+    // Auto-fetch daily question immediately on mount
     fetchDailyQuestion(subject, exam)
       .then(d=>{ setDailyQ(d.question); setLoading(false); })
-      .catch(()=>setLoading(false));
+      .catch(e=>{ console.warn("Daily Q fetch failed:", e.message); setLoading(false); });
   },[]);
 
   const answerDaily = (letter) => {
     if(dailySel) return;
     setDailySel(letter);
-    localStorage.setItem(DAILY_DONE_KEY, "1");
+    const correct = letter === dailyQ.answer;
+    // Update today's progress immediately
+    const p = updateTodayProgress(1, correct?1:0, true);
+    setTodayProgress(p);
+    // Notify parent to update streak/XP
+    if(onAnswered) onAnswered({ correct, question: dailyQ });
+    // Show answer for 3s then mark done
     setTimeout(()=>setDailyDone(true), 3000);
   };
 
@@ -3898,20 +3933,39 @@ function HomeScreen({ user, onNavigate }) {
         </div>
       </div>
 
-      {/* Today's goal progress */}
-      <Card style={{marginBottom:12,background:`linear-gradient(135deg,${lvl.color}14,${C.card})`,borderColor:lvl.color+"33"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.textLight}}>Today's goal</div>
-          <div style={{fontSize:11,color:C.muted}}>{dailyTarget} questions recommended</div>
-        </div>
-        <div style={{background:C.border,borderRadius:6,height:8,overflow:"hidden"}}>
-          <div style={{background:lvl.color,height:"100%",width:Math.min(100,(stats.todayAnswered||0)/dailyTarget*100)+"%",borderRadius:6,transition:"width 1s"}}/>
-        </div>
-        <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:11,color:C.muted}}>
-          <span>{stats.todayAnswered||0} answered today</span>
-          <span>{Math.max(0,dailyTarget-(stats.todayAnswered||0))} to go</span>
-        </div>
-      </Card>
+      {/* Today's goal progress — live, updates as student answers */}
+      {(()=>{
+        const answered = todayProgress.answered || 0;
+        const pctDone  = Math.min(100, Math.round((answered / dailyTarget) * 100));
+        const goalMet  = answered >= dailyTarget;
+        return(
+          <Card
+            onClick={()=>onNavigate&&onNavigate("quiz")}
+            style={{marginBottom:12,background:`linear-gradient(135deg,${goalMet?C.green:lvl.color}14,${C.card})`,borderColor:(goalMet?C.green:lvl.color)+"33",cursor:"pointer"}}
+          >
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.textLight}}>{goalMet?"🎯 Goal Complete!":"Today's goal"}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:1}}>{goalMet?"Great work — keep going!":`${dailyTarget} questions recommended`}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontWeight:900,fontSize:18,color:goalMet?C.green:lvl.color}}>{answered}</div>
+                <div style={{fontSize:10,color:C.muted}}>of {dailyTarget}</div>
+              </div>
+            </div>
+            <div style={{background:C.border,borderRadius:6,height:10,overflow:"hidden"}}>
+              <div style={{background:goalMet?C.green:lvl.color,height:"100%",width:pctDone+"%",borderRadius:6,transition:"width .8s ease"}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:11}}>
+              <span style={{color:C.muted}}>{answered} answered today</span>
+              {!goalMet
+                ? <span style={{color:lvl.color,fontWeight:700}}>Tap to practice → {dailyTarget-answered} to go</span>
+                : <span style={{color:C.green,fontWeight:700}}>✅ Done for today</span>
+              }
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* DAILY QUESTION — the core habit loop */}
       {!loading&&dailyQ&&!dailyDone&&(
@@ -3951,10 +4005,23 @@ function HomeScreen({ user, onNavigate }) {
 
       {/* Daily done state */}
       {dailyDone&&(
-        <Card style={{background:C.green+"11",borderColor:C.green+"33",marginBottom:14,textAlign:"center",padding:"16px 12px"}}>
-          <div style={{fontSize:24,marginBottom:4}}>✅</div>
-          <div style={{fontWeight:800,fontSize:14,color:C.green}}>Daily question done!</div>
-          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Come back tomorrow for a new one</div>
+        <Card style={{background:C.green+"11",borderColor:C.green+"33",marginBottom:14,padding:"14px 12px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{fontSize:28}}>✅</div>
+            <div>
+              <div style={{fontWeight:800,fontSize:14,color:C.green}}>Daily question done!</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:1}}>
+                {(todayProgress.answered||0) >= dailyTarget
+                  ? "You've hit today's goal! 🎯"
+                  : `${Math.max(0,dailyTarget-(todayProgress.answered||0))} more to reach your daily goal`}
+              </div>
+            </div>
+          </div>
+          {(todayProgress.answered||0) < dailyTarget&&(
+            <button onClick={()=>onNavigate&&onNavigate("quiz")} style={{width:"100%",background:C.green,border:"none",borderRadius:12,padding:"11px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+              📝 Keep Practising → {dailyTarget-(todayProgress.answered||0)} questions to goal
+            </button>
+          )}
         </Card>
       )}
 
@@ -4368,6 +4435,9 @@ export default function App() {
   // Save a quiz/CBT result to the server and award XP
   const handleSaveHistory = useCallback(async (entry) => {
     saveHistory(entry); // always save locally too
+    // Update today's progress counter (drives home screen goal bar)
+    const todayCorrect = Math.round(((entry.pct||0)/100) * (entry.total||0));
+    updateTodayProgress(entry.total||0, todayCorrect, false);
     if(!getToken()) return;
     try {
       const data = await apiCall("/api/progress/save", "POST", entry);
@@ -4475,7 +4545,7 @@ export default function App() {
   const handleHomeNav = (dest) => {
     if(dest==="practice") setTab("practice");
     else if(dest==="learn") setTab("learn");
-    else if(dest==="career") setTab("me");
+    else if(dest==="career") setTab("career");
     else if(dest==="snap") setTab("ask");
     else if(dest==="study") setTab("learn");
     else setTab(dest);
@@ -4554,7 +4624,9 @@ export default function App() {
 
       {/* Tab content */}
       <div style={{padding:"14px 13px 0",animation:"fadeUp .3s ease"}}>
-        {tab==="home"     &&<HomeScreen user={user} onNavigate={handleHomeNav}/>}
+        {tab==="home"     &&<HomeScreen user={user} onNavigate={handleHomeNav} onAnswered={(r)=>{
+  updateTodayProgress(1, r.correct?1:0, false);
+}}/>}
         {tab==="ask"      &&<AskAI/>}
         {tab==="practice" &&<PracticeHub onSaveHistory={handleSaveHistory}/>}
         {tab==="learn"    &&<LearnHub user={user}/>}
