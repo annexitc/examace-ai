@@ -40,9 +40,19 @@ const apiCall = async (path, method="GET", body=null) => {
   const token = getToken();
   const opts = { method, headers:{ "Content-Type":"application/json", ...(token?{"Authorization":`Bearer ${token}`}:{}) } };
   if(body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${BACKEND}${path}`, opts);
+  let res;
+  try {
+    res = await fetch(`${BACKEND}${path}`, opts);
+  } catch(e) {
+    throw new Error("Cannot reach server. Check your internet connection.");
+  }
+  // Guard against HTML error pages (Render cold start, 502, etc.)
+  const contentType = res.headers.get("content-type")||"";
+  if(!contentType.includes("application/json")) {
+    throw new Error(res.ok ? "Server returned unexpected response." : `Server error (${res.status}). Please try again.`);
+  }
   const data = await res.json();
-  if(!res.ok) throw new Error(data.error || `API error ${res.status}`);
+  if(!res.ok) throw new Error(data.error || `Error ${res.status}. Please try again.`);
   return data;
 };
 
@@ -97,7 +107,8 @@ const callCareer = async (message, history=[], profile={}) => {
     headers: { "Content-Type": "application/json", ...(getToken()?{"Authorization":`Bearer ${getToken()}`}:{}) },
     body: JSON.stringify({ message, history, profile }),
   });
-  if(!res.ok) throw new Error(`Career API error: ${res.status}`);
+  const careerCt = res.headers.get("content-type")||"";
+  if(!res.ok || !careerCt.includes("application/json")) throw new Error(`Career API error: ${res.status}`);
   return await res.json();
 };
 
@@ -110,12 +121,24 @@ const fetchDailyQuestion = async (subject, exam="WAEC") => {
 
 const callAI = async (messages, system, imgData) => {
   const body = { messages, system, imgData };
-  const res = await fetch(`${BACKEND}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Server error: ${res.status}`);
+  let res;
+  try {
+    res = await fetch(`${BACKEND}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch(e) {
+    throw new Error("Cannot reach server. Check your internet connection.");
+  }
+  const ct = res.headers.get("content-type")||"";
+  if(!ct.includes("application/json")) {
+    throw new Error(`Server error (${res.status}). The server may be starting up — please try again in 30 seconds.`);
+  }
+  if(!res.ok) {
+    const err = await res.json().catch(()=>({}));
+    throw new Error(err.error || `Server error: ${res.status}`);
+  }
   const d = await res.json();
   return {
     text: d.content?.find(b => b.type === "text")?.text || "Could not process. Please try again.",
@@ -151,7 +174,8 @@ const fetchQuestionsBatch = async (subjects) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subjects }),
     });
-    if (!res.ok) throw new Error(`Batch API error: ${res.status}`);
+    const ctb = res.headers.get("content-type")||"";
+    if (!res.ok || !ctb.includes("application/json")) throw new Error(`Batch API error: ${res.status}`);
     return res.json();
   } catch(e) {
     console.warn("Batch API unavailable:", e.message);
@@ -715,13 +739,21 @@ const Sel = ({value,onChange,options,placeholder}) => <select value={value} onCh
 const Btn = ({onClick,loading:l,children,color=C.gold,tc="#000",disabled,sm}) => <button onClick={onClick} disabled={l||disabled} style={{width:sm?"auto":"100%",background:l||disabled?C.card2:color,border:"none",borderRadius:sm?10:13,padding:sm?"8px 18px":"14px 20px",color:l||disabled?C.sub:tc,fontWeight:800,fontSize:sm?12:14,cursor:l||disabled?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>{l?<><span style={{width:15,height:15,border:"2px solid #444",borderTopColor:color,borderRadius:"50%",display:"inline-block",animation:"spin .7s linear infinite"}}/>Working...</>:children}</button>;
 const Out = ({text,color=C.gold,source,title="",subtitle=""}) => (
   <div style={{marginTop:12,animation:"fadeUp .4s ease"}}>
-    <div style={{background:C.card2,border:`1px solid ${color}33`,borderRadius:"14px 14px 0 0",padding:16,maxHeight:460,overflowY:"auto",fontSize:13}}>
+    <div style={{background:C.card2,border:`1px solid ${color}33`,borderRadius:14,padding:16,maxHeight:460,overflowY:"auto",fontSize:13}}>
       {fmt(text,true)}
-      {source&&<AiBadge source={source}/>}
-    </div>
-    <div style={{display:"flex",gap:0,borderRadius:"0 0 14px 14px",overflow:"hidden",border:`1px solid ${color}33`,borderTop:"none"}}>
-      <button onClick={()=>navigator.clipboard.writeText(text)} style={{flex:1,background:C.card,border:"none",borderRight:`1px solid ${C.border}`,padding:"9px 0",color:C.muted,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy</button>
-      <button onClick={()=>saveToPDF(title||"ExamAce AI Response", text, subtitle)} style={{flex:1,background:C.card,border:"none",padding:"9px 0",color:C.red,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>📄 Save PDF</button>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:10,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
+        {source&&<AiBadge source={source}/>}
+        <div style={{marginLeft:"auto",display:"flex",gap:4}}>
+          <button title="Copy text" onClick={()=>navigator.clipboard.writeText(text)}
+            style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:12}}>📋</span> Copy
+          </button>
+          <button title="Save as PDF" onClick={()=>saveToPDF(title||"ExamAce AI", text, subtitle)}
+            style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:12}}>📄</span> PDF
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 );
@@ -1937,7 +1969,10 @@ ${NG_CONTEXT}`,
                 {!m.streaming&&m.source&&<AiBadge source={m.source}/>}
               </div>
                 {!m.streaming&&m.from==="bot"&&m.text&&m.text.length>200&&(
-                  <button onClick={()=>saveToPDF("ExamAce AI Answer",m.text,"Chat response")} style={{background:"transparent",border:`1px solid #252838`,borderRadius:8,padding:"3px 10px",color:"#64748b",fontSize:10,cursor:"pointer",fontFamily:"inherit",marginTop:4}}>📄 Save PDF</button>
+                  <button title="Save as PDF" onClick={()=>saveToPDF("ExamAce AI", m.text, "Chat")}
+                    style={{background:"transparent",border:"none",padding:"2px 4px",color:"#94a3b8",fontSize:11,cursor:"pointer",fontFamily:"inherit",marginTop:2,display:"inline-flex",alignItems:"center",gap:2,opacity:.7}}>
+                    📄
+                  </button>
                 )}
             </div>
           ))}
@@ -2451,7 +2486,7 @@ function WeaknessPanel() {
 }
 
 function StudyTools() {
-  const [sub,setSub]=useState("keypoints");
+  const [sub,setSub]=useState("");  // empty = show tool list
   const [exam,setExam]=useState("WAEC");
   const [subject,setSubject]=useState("Mathematics");
   const [topic,setTopic]=useState("");
@@ -3666,30 +3701,20 @@ function DeepLearnMode() {
     setStage("loading"); setLoading(true);
     setLoadingMsg("Preparing your lesson...");
 
-    const LESSON_PROMPT = `You are an expert Nigerian ${exam} teacher teaching "${activeTopic}" in ${subject}.
+    const LESSON_PROMPT = `Create a Nigerian ${exam} ${subject} lesson on "${activeTopic}" as a JSON object.
 
-Create a complete structured lesson for a secondary school leaver preparing for ${exam}.
+The JSON must have exactly these 6 string/array fields:
+- intro: 2 sentences welcoming the student and explaining why this topic matters for ${exam}
+- explain: 200 word explanation using Nigerian examples. Bold key terms with **bold**.
+- example: A worked ${exam} exam question with full solution. Number the steps.
+- check: One short open-ended question to test understanding.
+- quiz: Array of 5 objects each with q, options (A/B/C/D), answer (single letter), explanation.
+- summary: 5 key points each starting with a bullet.
 
-Respond ONLY with valid JSON in this exact format:
-{
-  "intro": "A warm 2-sentence welcome that names the topic and why it matters for ${exam}",
-  "explain": "Clear explanation in 200-250 words. Use Nigerian examples (₦, Lagos, Kano, Nigeria). Break into short paragraphs. Include the key formula or rule if applicable. Use **bold** for key terms.",
-  "example": "One fully worked ${exam}-style example with COMPLETE step-by-step solution. Show ALL working. Format:\n**Question:** [question]\n**Step 1:** [step]\n**Step 2:** [step]\n**Answer:** [answer with units]",
-  "check": "A single short open-ended question to test understanding before the quiz. Should be answerable in 1-3 sentences.",
-  "quiz": [
-    {"q":"MCQ question 1 in ${exam} style","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"A","explanation":"Why A is correct and others wrong"},
-    {"q":"MCQ question 2","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"B","explanation":"..."},
-    {"q":"MCQ question 3","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"C","explanation":"..."},
-    {"q":"MCQ question 4","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"A","explanation":"..."},
-    {"q":"MCQ question 5","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"D","explanation":"..."}
-  ],
-  "summary": "5 bullet-point summary of key things to remember for ${exam}. Start each with ✅"
-}`;
+Return ONLY the JSON. No text before or after. No code fences.`;
 
     try {
-      const sysPrompt = `You are an expert Nigerian ${exam} ${subject} teacher. 
-CRITICAL: You MUST respond with ONLY a valid JSON object. No introduction, no explanation, no markdown code fences. 
-Start your response with { and end with }. Nothing before or after.`;
+      const sysPrompt = `You are a Nigerian ${exam} ${subject} teacher. Respond with a single valid JSON object only. Start with { and end with }. Absolutely no text outside the JSON.`;
 
       const {text,source} = await callAI(
         [{role:"user", content:LESSON_PROMPT}],
@@ -3992,10 +4017,12 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
               }} style={{flex:1,background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:12,padding:"12px 0",color:C.sky,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>💬 Ask AI More</button>
             </div>
             <button onClick={()=>saveToPDF(
-              activeTopic+" — "+subject+" Lesson",
+              activeTopic+" — "+subject,
               "INTRODUCTION\n"+lesson.intro+"\n\nEXPLANATION\n"+lesson.explain+"\n\nWORKED EXAMPLE\n"+lesson.example+"\n\nKEY TAKEAWAYS\n"+lesson.summary,
-              exam+" · ExamAce AI Deep Learning Mode"
-            )} style={{width:"100%",background:C.red+"11",border:`1px solid ${C.red}33`,borderRadius:12,padding:"11px 0",color:C.red,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginTop:8}}>📄 Save Full Lesson as PDF</button>
+              exam+" · ExamAce AI Lesson"
+            )} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 16px",color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginTop:8,display:"flex",alignItems:"center",gap:6,width:"100%",justifyContent:"center"}}>
+              <span>📄</span> Save lesson as PDF
+            </button>
           </Card>
         </div>
       )}
