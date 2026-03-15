@@ -56,7 +56,7 @@ const NIGERIA_STATES = [
 
 // Gamification helpers (mirror server constants)
 const LEVELS_CLIENT = [
-  {level:1,name:"JSS3 Student",  minXP:0,   badge:"🌱",color:"#22c55e"},
+  {level:1,name:"SS1 Starter",  minXP:0,   badge:"🌱",color:"#22c55e"},
   {level:2,name:"SS1 Learner",   minXP:100, badge:"📚",color:"#38bdf8"},
   {level:3,name:"SS2 Scholar",   minXP:300, badge:"⭐",color:"#a855f7"},
   {level:4,name:"SS3 Candidate", minXP:600, badge:"🎯",color:"#f97316"},
@@ -89,6 +89,24 @@ const ACHIEVEMENTS_CLIENT = [
   {id:"review_10",   name:"Disciplined",     desc:"Complete 10 spaced repetition reviews", icon:"🔁"},
   {id:"review_50",   name:"Memory Master",   desc:"Complete 50 spaced repetition reviews", icon:"🧠"},
 ];
+
+// Career counselling API
+const callCareer = async (message, history=[], profile={}) => {
+  const res = await fetch(`${BACKEND}/api/career`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(getToken()?{"Authorization":`Bearer ${getToken()}`}:{}) },
+    body: JSON.stringify({ message, history, profile }),
+  });
+  if(!res.ok) throw new Error(`Career API error: ${res.status}`);
+  return await res.json();
+};
+
+// Daily question API
+const fetchDailyQuestion = async (subject, exam="WAEC") => {
+  const res = await fetch(`${BACKEND}/api/daily-question?subject=${encodeURIComponent(subject||"Mathematics")}&exam=${exam}`);
+  if(!res.ok) throw new Error("Daily question unavailable");
+  return await res.json();
+};
 
 const callAI = async (messages, system, imgData) => {
   const body = { messages, system, imgData };
@@ -281,15 +299,45 @@ const loadCBTSave = () => {
 };
 const clearCBTSave = () => { try { localStorage.removeItem(CBT_SAVE_KEY); } catch {} };
 
-// Source badge colours
-const SOURCE_BADGE = {
-  ALOC:    { bg:"#22c55e18", border:"#22c55e33", color:"#22c55e", label:"✅ Real Past Question (ALOC)" },
-  AI:      { bg:"#3b82f618", border:"#3b82f633", color:"#38bdf8", label:"🤖 AI-Generated" },
-  Gemini:  { bg:"#3b82f618", border:"#3b82f633", color:"#38bdf8", label:"🤖 AI (Gemini)" },
-  DeepSeek:{ bg:"#a855f718", border:"#a855f733", color:"#a855f7", label:"🤖 AI (DeepSeek)" },
-  Groq:    { bg:"#14b8a618", border:"#14b8a633", color:"#14b8a6", label:"🤖 AI (Groq/Llama)" },
-  Claude:  { bg:"#f5c84218", border:"#f5c84233", color:"#f5c842", label:"🤖 AI (Claude)" },
+// ═══════════════════════════════════════════════════════════════════════════
+// CHALLENGE SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+
+const createChallenge = async (subject, exam, year, score, total, pct, questions) => {
+  try {
+    return await apiCall("/api/challenge/create","POST",{subject,exam,year,score,total,pct,questions:questions.slice(0,10)});
+  } catch(e){ console.warn("Challenge create failed:",e.message); return null; }
 };
+
+const fetchChallenge = async (id) => {
+  const res = await fetch(`${BACKEND}/api/challenge/${id}`);
+  if(!res.ok) throw new Error("Challenge not found or expired");
+  return res.json();
+};
+
+const submitChallenge = async (id, answers, guestName) => {
+  const res = await fetch(`${BACKEND}/api/challenge/${id}/submit`,{
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({answers,guestName}),
+  });
+  if(!res.ok) throw new Error("Could not submit");
+  return res.json();
+};
+
+const getChallengeIdFromUrl = () => {
+  try {
+    const m = window.location.pathname.match(/\/challenge\/([A-Z0-9]{6})/i);
+    return m ? m[1].toUpperCase() : null;
+  } catch { return null; }
+};
+
+// Source badge — always shows ExamAce AI (never reveals underlying model)
+const SOURCE_BADGE = {
+  "ExamAce AI": { bg:"#f5c84218", border:"#f5c84233", color:"#f5c842", label:"✨ ExamAce AI" },
+  "ALOC":       { bg:"#22c55e18", border:"#22c55e33", color:"#22c55e", label:"✅ Real Past Question" },
+  "Error":      { bg:"#ef444418", border:"#ef444433", color:"#ef4444", label:"⚠️ Error" },
+};
+const getSourceBadge = (src) => SOURCE_BADGE[src] || SOURCE_BADGE["ExamAce AI"];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HISTORY STORE
@@ -321,7 +369,7 @@ const updateStreak = () => {
 // NIGERIA CURRICULUM DATA
 // ═══════════════════════════════════════════════════════════════════════════
 const EXAMS    = ["WAEC","NECO","JAMB"];
-const YEARS    = ["2024","2023","2022","2021","2020","2019","2018","2017","2016","2015","2014","2013","2012","2010","2008","2005","2003","2000"];
+const YEARS    = ["2025","2024","2023","2022","2021","2020","2019","2018","2017","2016","2015","2014","2013","2012","2010","2008","2005","2003","2000"];
 const SUBJECTS = [
   "Mathematics","English Language","Physics","Chemistry","Biology",
   "Economics","Government","Literature in English","Accounting","Commerce",
@@ -330,9 +378,9 @@ const SUBJECTS = [
 ];
 
 const EXAM_DATES = {
-  "WAEC 2025":  new Date("2025-05-05"),
-  "NECO 2025":  new Date("2025-06-16"),
-  "JAMB 2025":  new Date("2025-04-26"),
+  "WAEC 2025":  new Date("2026-05-05"),
+  "NECO 2025":  new Date("2026-06-16"),
+  "JAMB 2025":  new Date("2026-04-16"),
 };
 
 // Nigeria-specific topic maps for each subject
@@ -584,11 +632,15 @@ const fmt = (text, onDark=true) => {
 // AI Source badge
 const AiBadge = ({ source }) => {
   if (!source) return null;
-  const info = SOURCE_BADGE[source];
-  const c = info?.color || C.muted;
-  const label = info?.label || `⚡ ${source}`;
+  // Always show ExamAce branding — never expose underlying AI provider
+  const isReal = source === "ALOC";
+  const isError = source === "Error";
+  const bg    = isReal ? "#22c55e18" : isError ? "#ef444418" : "#f5c84218";
+  const border= isReal ? "#22c55e33" : isError ? "#ef444433" : "#f5c84233";
+  const color = isReal ? "#22c55e"   : isError ? "#ef4444"   : "#f5c842";
+  const label = isReal ? "✅ Real Past Question" : isError ? "⚠️ Try again" : "🏆 ExamAce AI";
   return (
-    <div style={{ display:"inline-flex", alignItems:"center", gap:4, background:info?.bg||c+"18", border:`1px solid ${info?.border||c+"33"}`, borderRadius:20, padding:"2px 8px", fontSize:9, color:c, fontWeight:800, marginTop:6 }}>
+    <div style={{ display:"inline-flex", alignItems:"center", gap:4, background:bg, border:`1px solid ${border}`, borderRadius:20, padding:"2px 8px", fontSize:9, color, fontWeight:800, marginTop:6 }}>
       {label}
     </div>
   );
@@ -1408,6 +1460,7 @@ function Quiz({ onSaveHistory }) {
   const [timerOn,setTimerOn]=useState(false);
   const [coach,setCoach]=useState("");
   const [coachLoading,setCoachLoading]=useState(false);
+  const [showChallenge,setShowChallenge]=useState(false);
   const [aiSource,setAiSource]=useState("");
   const tRef=useRef();
 
@@ -1648,6 +1701,9 @@ Keep it warm and Nigeria-context aware.`);
             )}
             <div style={{marginTop:8,background:C.gold+"18",borderRadius:10,padding:"6px 12px",display:"inline-block",fontSize:11,color:C.gold,fontWeight:700}}>✅ Result saved to history!</div>
             {(()=>{const wrong=log.filter(r=>!r.ok);return wrong.length>0?<div style={{marginTop:6,background:C.purple+"18",borderRadius:10,padding:"5px 12px",display:"inline-block",fontSize:11,color:C.purple,fontWeight:700}}>🔁 {wrong.length} wrong questions scheduled for review</div>:null;})()}
+            {/* Challenge share — appears after score >= 60% */}
+            {pct>=60&&<button onClick={()=>setShowChallenge(true)} style={{marginTop:10,width:"100%",background:C.purple+"22",border:`1.5px solid ${C.purple}44`,borderRadius:12,padding:"11px 0",color:C.purple,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>⚔️ Challenge a Friend — Can They Beat {pct}%?</button>}
+            {showChallenge&&<ChallengeShareCard subject={subject} exam={exam} year={year} score={score} total={qs.length} pct={pct} questions={qs.map((q,i)=>({...q,sel:log[i]?.sel,ok:log[i]?.ok}))} onClose={()=>setShowChallenge(false)}/>}
           </Card>
 
           {(coachLoading||coach)&&(
@@ -1851,9 +1907,67 @@ function SnapSolve() {
   const [answer,setAnswer]=useState("");
   const [aiSource,setAiSource]=useState("");
   const [loading,setLoading]=useState(false);
+  const [camMode,setCamMode]=useState(false);
+  const [stream,setStream]=useState(null);
   const fileRef=useRef();
+  const videoRef=useRef();
+  const canvasRef=useRef();
 
-  const onFile = async f=>{if(!f)return;setPreview(URL.createObjectURL(f));setImgData({data:await toBase64(f),type:f.type||"image/jpeg"});setAnswer("");setAiSource("");};
+  // Auto-open camera when Snap tab is visited
+  useEffect(()=>{
+    openCamera();
+    return ()=>{ stopCamera(); };
+  },[]);
+
+  const openCamera = async () => {
+    // Only try camera if no image already loaded
+    if(preview) return;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:"environment", width:{ideal:1280}, height:{ideal:720} }
+      });
+      setStream(s);
+      setCamMode(true);
+      // Attach stream to video element after state update
+      setTimeout(()=>{ if(videoRef.current){ videoRef.current.srcObject=s; videoRef.current.play(); } },100);
+    } catch(e) {
+      console.log("Camera not available, using file picker:", e.message);
+      setCamMode(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); setStream(null); }
+    setCamMode(false);
+  };
+
+  const capturePhoto = () => {
+    if(!videoRef.current||!canvasRef.current) return;
+    const v=videoRef.current, c=canvasRef.current;
+    c.width=v.videoWidth; c.height=v.videoHeight;
+    c.getContext("2d").drawImage(v,0,0);
+    c.toBlob(async blob=>{
+      if(!blob) return;
+      const dataUrl=c.toDataURL("image/jpeg",0.92);
+      setPreview(dataUrl);
+      setImgData({data:dataUrl.split(",")[1], type:"image/jpeg"});
+      setAnswer("");setAiSource("");
+      stopCamera();
+    },"image/jpeg",0.92);
+  };
+
+  const retake = () => {
+    setPreview(null);setImgData(null);setAnswer("");setAiSource("");
+    openCamera();
+  };
+
+  const onFile = async f=>{
+    if(!f)return;
+    stopCamera();
+    setPreview(URL.createObjectURL(f));
+    setImgData({data:await toBase64(f),type:f.type||"image/jpeg"});
+    setAnswer("");setAiSource("");
+  };
 
   const solve = async () => {
     if(!imgData)return;
@@ -1885,29 +1999,61 @@ ${note?"\nStudent's note: \""+note+"\"":""}`,
 
   return (
     <div>
-      <Card style={{background:`linear-gradient(135deg,${C.greenD}22,${C.card})`,borderColor:C.green+"44"}}>
-        <div style={{fontSize:28,marginBottom:4}}>📸</div>
-        <div style={{fontWeight:900,fontSize:16,color:C.green,marginBottom:3}}>Snap & Solve</div>
-        <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>Snap any WAEC/NECO/JAMB question — AI reads it and provides full marking-scheme solution!</div>
+      <Card style={{background:`linear-gradient(135deg,${C.greenD}22,${C.card})`,borderColor:C.green+"44",marginBottom:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{fontSize:28}}>📸</div>
+          <div>
+            <div style={{fontWeight:900,fontSize:16,color:C.green}}>Snap & Solve</div>
+            <div style={{fontSize:11,color:C.muted}}>Point at any question — AI solves with full marking scheme</div>
+          </div>
+        </div>
       </Card>
 
-      <Card>
+      <Card style={{padding:"10px 12px",marginBottom:8}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
           <div><Label>Exam</Label><Sel value={exam} onChange={setExam} options={EXAMS} placeholder="Exam"/></div>
-          <div><Label>Subject</Label><Sel value={subject} onChange={setSubject} options={SUBJECTS} placeholder="Auto-detect"/></div>
+          <div><Label>Subject</Label><Sel value={subject} onChange={setSubject} options={SUBJECTS} placeholder="Auto"/></div>
           <div><Label>Year</Label><Sel value={year} onChange={setYear} options={YEARS} placeholder="Any"/></div>
         </div>
       </Card>
 
-      <div onClick={()=>fileRef.current.click()} style={{border:`2.5px dashed ${preview?C.green:C.border}`,borderRadius:16,padding:24,textAlign:"center",cursor:"pointer",background:preview?C.green+"11":C.card,marginBottom:12,minHeight:180,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
-        {preview?<><img src={preview} alt="" style={{maxWidth:"100%",maxHeight:240,borderRadius:10,objectFit:"contain"}}/><div style={{fontSize:11,color:C.green,fontWeight:700,marginTop:4}}>✅ Image ready · Tap to change</div></>:<><div style={{fontSize:52}}>📷</div><div style={{fontWeight:700,color:C.green,fontSize:15}}>Tap to upload question photo</div><div style={{fontSize:12,color:C.muted}}>Handwritten · Printed · Screenshot — all supported</div></>}
-        <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>onFile(e.target.files[0])}/>
-      </div>
+      {camMode&&!preview&&(
+        <div style={{position:"relative",borderRadius:16,overflow:"hidden",marginBottom:10,background:"#000"}}>
+          <video ref={videoRef} autoPlay playsInline muted style={{width:"100%",maxHeight:340,objectFit:"cover",display:"block"}}/>
+          <canvas ref={canvasRef} style={{display:"none"}}/>
+          <div style={{position:"absolute",inset:0,border:"2px solid "+C.green+"88",borderRadius:16,pointerEvents:"none"}}/>
+          <div style={{position:"absolute",top:10,left:0,right:0,textAlign:"center",fontSize:11,color:"#fff",fontWeight:700,textShadow:"0 1px 4px rgba(0,0,0,0.8)"}}>📖 Aim at the question and tap capture</div>
+          <div style={{position:"absolute",bottom:16,left:0,right:0,display:"flex",justifyContent:"center",gap:14}}>
+            <button onClick={capturePhoto} style={{width:68,height:68,borderRadius:"50%",background:C.green,border:"4px solid #fff",fontSize:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>📷</button>
+            <button onClick={()=>{stopCamera();fileRef.current.click();}} style={{width:44,height:44,borderRadius:"50%",background:C.card2,border:`2px solid ${C.border}`,fontSize:18,cursor:"pointer",alignSelf:"center"}}>🖼️</button>
+          </div>
+        </div>
+      )}
+
+      {preview&&(
+        <div style={{position:"relative",marginBottom:10}}>
+          <img src={preview} alt="" style={{width:"100%",maxHeight:280,borderRadius:14,objectFit:"contain",background:"#000"}}/>
+          <button onClick={retake} style={{position:"absolute",top:10,right:10,background:C.card+"cc",border:`1px solid ${C.border}`,borderRadius:20,padding:"5px 12px",color:C.textLight,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🔄 Retake</button>
+        </div>
+      )}
+
+      {!camMode&&!preview&&(
+        <div onClick={()=>fileRef.current.click()} style={{border:`2.5px dashed ${C.border}`,borderRadius:16,padding:32,textAlign:"center",cursor:"pointer",background:C.card,marginBottom:10}}>
+          <div style={{fontSize:48,marginBottom:8}}>🖼️</div>
+          <div style={{fontWeight:700,color:C.muted,fontSize:14}}>Tap to choose a photo</div>
+          <div style={{fontSize:12,color:C.sub,marginTop:4}}>Camera unavailable — use gallery</div>
+        </div>
+      )}
+
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>onFile(e.target.files[0])}/>
 
       {preview&&(
         <>
-          <Card><Label>Additional note (optional)</Label><Inp value={note} onChange={setNote} placeholder="e.g. 'WAEC 2022 Q3b — show full working and state theorem used'"/></Card>
-          <Btn onClick={solve} loading={loading} color={C.green} tc="#fff">🔍 Read & Solve with Marking Scheme</Btn>
+          <Card style={{padding:"10px 12px",marginBottom:8}}>
+            <Label>Note (optional)</Label>
+            <Inp value={note} onChange={setNote} placeholder="e.g. Show theorem used, WAEC 2022 Q3b"/>
+          </Card>
+          <Btn onClick={solve} loading={loading} color={C.green} tc="#fff">🔍 Solve with Full Marking Scheme</Btn>
         </>
       )}
 
@@ -1916,13 +2062,14 @@ ${note?"\nStudent's note: \""+note+"\"":""}`,
           <Out text={answer} color={C.green} source={aiSource}/>
           <div style={{display:"flex",gap:8,marginTop:10}}>
             <button onClick={()=>navigator.clipboard.writeText(answer)} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 0",color:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy</button>
-            <a href={`https://wa.me/?text=${encodeURIComponent(`📸 Solved by ExamAce AI!\n${exam} ${year||""} ${subject||""}\n\n${answer.slice(0,350)}...\n\n🏆 ExamAce AI 🇳🇬`)}`} target="_blank" rel="noreferrer" style={{flex:1,background:C.wa,borderRadius:10,padding:"10px 0",color:"#fff",fontWeight:700,fontSize:12,textAlign:"center",textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>💬 Share</a>
+            <button onClick={()=>{const t="📸 Solved by ExamAce AI!\n"+exam+" "+(year||"")+" "+(subject||"")+"\n\n"+answer.slice(0,350)+"...\n\n🏆 ExamAce AI 🇳🇬";if(navigator.share)navigator.share({title:"ExamAce AI",text:t});else navigator.clipboard.writeText(t);}} style={{flex:1,background:C.wa,borderRadius:10,padding:"10px 0",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>💬 Share</button>
           </div>
         </>
       )}
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ESSAY MARKER
@@ -2983,8 +3130,1193 @@ function ProfileScreen({ user, onClose, onLogout, onUpdate }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PRACTICE HUB — Quiz + CBT merged into one tab
+// ═══════════════════════════════════════════════════════════════════════════
+function PracticeHub({ onSaveHistory }) {
+  const [mode,setMode] = useState("home"); // home | quiz | cbt
+
+  if(mode==="quiz") return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0",display:"flex",alignItems:"center",gap:6}}>← Back</button><Quiz onSaveHistory={onSaveHistory}/></div>;
+  if(mode==="cbt")  return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0",display:"flex",alignItems:"center",gap:6}}>← Back</button><JambCBT onSaveHistory={onSaveHistory}/></div>;
+
+  const dueReviews = getDueReviews().length;
+  const weakTopics = getWeakTopics().length;
+
+  return(
+    <div>
+      <div style={{marginBottom:16}}>
+        <div style={{fontWeight:900,fontSize:18,color:"#f1f5f9",marginBottom:2}}>Practice</div>
+        <div style={{fontSize:12,color:"#94a3b8"}}>Real past questions from ALOC · WAEC · NECO · JAMB</div>
+      </div>
+
+      {/* Primary options */}
+      <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+        <button onClick={()=>setMode("quiz")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:48,height:48,background:"#3b82f622",border:"1px solid #3b82f633",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>📝</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Past Questions Quiz</div>
+            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>Practice by subject · Filter by year · WAEC/NECO/JAMB</div>
+          </div>
+          <div style={{fontSize:18,color:"#94a3b8"}}>→</div>
+        </button>
+
+        <button onClick={()=>setMode("cbt")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:48,height:48,background:"#a855f722",border:"1px solid #a855f733",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>🖥️</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>JAMB CBT Mock Exam</div>
+            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>180 questions · 4 subjects · 2 hours · Timed</div>
+          </div>
+          <div style={{fontSize:18,color:"#94a3b8"}}>→</div>
+        </button>
+      </div>
+
+      {/* Secondary tools */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        {dueReviews>0&&(
+          <button onClick={()=>setMode("quiz")} style={{background:"#a855f711",border:"1px solid #a855f733",borderRadius:14,padding:"14px 12px",textAlign:"left",cursor:"pointer",fontFamily:"inherit"}}>
+            <div style={{fontSize:20,marginBottom:6}}>🔁</div>
+            <div style={{fontSize:13,fontWeight:700,color:"#a855f7",marginBottom:2}}>{dueReviews} Due Reviews</div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>Spaced repetition</div>
+          </button>
+        )}
+        {weakTopics>0&&(
+          <button onClick={()=>setMode("quiz")} style={{background:"#ef444411",border:"1px solid #ef444433",borderRadius:14,padding:"14px 12px",textAlign:"left",cursor:"pointer",fontFamily:"inherit"}}>
+            <div style={{fontSize:20,marginBottom:6}}>💪</div>
+            <div style={{fontSize:13,fontWeight:700,color:"#ef4444",marginBottom:2}}>{weakTopics} Weak Topics</div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>Targeted drill</div>
+          </button>
+        )}
+        <button onClick={()=>setMode("quiz")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:14,padding:"14px 12px",textAlign:"left",cursor:"pointer",fontFamily:"inherit"}}>
+          <div style={{fontSize:20,marginBottom:6}}>📸</div>
+          <div style={{fontSize:13,fontWeight:700,color:"#22c55e",marginBottom:2}}>Snap & Solve</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>Photo any question</div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEARN HUB — Deep Learning + Study Tools + Career
+// ═══════════════════════════════════════════════════════════════════════════
+function LearnHub({ user }) {
+  const [mode,setMode] = useState("home"); // home | deeplearn | studytools | career
+
+  if(mode==="deeplearn")  return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back</button><DeepLearnMode/></div>;
+  if(mode==="studytools") return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back</button><StudyTools/></div>;
+  if(mode==="career")     return <div><button onClick={()=>setMode("home")} style={{background:"transparent",border:"none",color:"#94a3b8",fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back</button><CareerCounsellor user={user}/></div>;
+
+  const dueReviews = getDueReviews().length;
+
+  return(
+    <div>
+      <div style={{marginBottom:16}}>
+        <div style={{fontWeight:900,fontSize:18,color:"#f1f5f9",marginBottom:2}}>Learn</div>
+        <div style={{fontSize:12,color:"#94a3b8"}}>AI-powered teaching · Career guidance · Study tools</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <button onClick={()=>setMode("deeplearn")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:48,height:48,background:"#14b8a622",border:"1px solid #14b8a633",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>🎓</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Deep Learning Mode</div>
+            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>AI teaches you any topic step-by-step with examples and quiz</div>
+          </div>
+          <div style={{fontSize:18,color:"#94a3b8"}}>→</div>
+        </button>
+        <button onClick={()=>setMode("career")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:48,height:48,background:"#f9731622",border:"1px solid #f9731633",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>🧭</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Career Advisor</div>
+            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>University courses, JAMB requirements, career paths in Nigeria</div>
+          </div>
+          <div style={{fontSize:18,color:"#94a3b8"}}>→</div>
+        </button>
+        <button onClick={()=>setMode("studytools")} style={{background:"#13151f",border:"1px solid #252838",borderRadius:16,padding:"18px 16px",textAlign:"left",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14}}>
+          <div style={{width:48,height:48,background:"#f5c84222",border:"1px solid #f5c84233",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>📚</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:15,color:"#f1f5f9",marginBottom:3}}>Study Tools</div>
+            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.5}}>Key points · Mnemonics · Focus areas · Spaced reviews{dueReviews>0?` · ${dueReviews} due`:""}</div>
+          </div>
+          {dueReviews>0&&<div style={{background:"#a855f7",color:"#fff",borderRadius:"50%",width:20,height:20,fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{dueReviews>9?"9+":dueReviews}</div>}
+          <div style={{fontSize:18,color:"#94a3b8",marginLeft:4}}>→</div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ME TAB — Profile + Stats + Leaderboard + Logout
+// ═══════════════════════════════════════════════════════════════════════════
+function MeTab({ user, onUpdate, onLogout }) {
+  const [showFullProfile,setShowFullProfile] = useState(false);
+  if(showFullProfile) return <ProfileScreen user={user} onClose={()=>setShowFullProfile(false)} onLogout={onLogout} onUpdate={onUpdate}/>;
+
+  const lvl   = getLevelClient(user?.xp||0);
+  const stats = user?.stats||{};
+  const acc   = stats.totalAnswered>0 ? Math.round((stats.totalCorrect/stats.totalAnswered)*100) : 0;
+
+  return(
+    <div>
+      {/* Profile card */}
+      <div style={{background:`linear-gradient(135deg,${lvl.color}22,#13151f)`,border:`1px solid ${lvl.color}33`,borderRadius:16,padding:16,marginBottom:12}}>
+        <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:12}}>
+          <div style={{width:52,height:52,background:lvl.color+"22",border:`2px solid ${lvl.color}`,borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,flexShrink:0}}>{lvl.badge}</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:900,fontSize:17,color:"#f1f5f9"}}>{user?.name}</div>
+            <div style={{fontSize:12,color:lvl.color,fontWeight:700}}>{lvl.badge} {lvl.name} · Level {lvl.level}</div>
+            <div style={{fontSize:11,color:"#94a3b8"}}>{user?.exam} Candidate · {user?.state||"Nigeria"}</div>
+          </div>
+        </div>
+        <div style={{background:"#1a1d2a",borderRadius:8,height:10,overflow:"hidden",marginBottom:4}}>
+          <div style={{background:lvl.color,height:"100%",width:lvl.progress+"%",borderRadius:8,transition:"width 1.5s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#64748b"}}>
+          <span>{user?.xp||0} XP</span>
+          {lvl.nextXP&&<span>{lvl.xpToNext} XP to Level {lvl.level+1}</span>}
+        </div>
+      </div>
+
+      {/* Stats grid */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:12}}>
+        {[["🔥",user?.currentStreak||0,"Streak","#f97316"],["📝",stats.quizzesCompleted||0,"Quizzes","#3b82f6"],["💯",acc+"%","Accuracy","#22c55e"],["🏆",stats.bestJAMB||0,"Best CBT","#a855f7"]].map(([icon,val,label,color])=>(
+          <div key={label} style={{background:"#13151f",border:"1px solid #252838",borderRadius:12,padding:"10px 6px",textAlign:"center"}}>
+            <div style={{fontSize:16,marginBottom:2}}>{icon}</div>
+            <div style={{fontWeight:900,fontSize:15,color}}>{val}</div>
+            <div style={{fontSize:9,color:"#94a3b8",marginTop:1}}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Buttons */}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <button onClick={()=>setShowFullProfile(true)} style={{background:"#13151f",border:"1px solid #252838",borderRadius:12,padding:"13px 16px",color:"#f1f5f9",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit",textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span>📊 Full Profile & History</span><span style={{color:"#94a3b8"}}>→</span>
+        </button>
+        <button onClick={onLogout} style={{background:"#ef444411",border:"1px solid #ef444433",borderRadius:12,padding:"13px 16px",color:"#ef4444",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CAREER COUNSELLOR
+// ═══════════════════════════════════════════════════════════════════════════
+const FACULTIES = {
+  "Medicine & Surgery":        {subjects:["Biology","Chemistry","Physics","Mathematics"],jamb:300,waec:"6B3"},
+  "Engineering":               {subjects:["Mathematics","Physics","Chemistry"],jamb:280,waec:"5B3"},
+  "Computer Science":          {subjects:["Mathematics","Physics"],jamb:260,waec:"5C6"},
+  "Law":                       {subjects:["Literature in English","Government","English Language"],jamb:270,waec:"6B3"},
+  "Accounting":                {subjects:["Mathematics","Economics","Commerce"],jamb:240,waec:"5C6"},
+  "Economics":                 {subjects:["Mathematics","Economics"],jamb:240,waec:"5C6"},
+  "Pharmacy":                  {subjects:["Chemistry","Biology","Mathematics"],jamb:290,waec:"6B3"},
+  "Nursing":                   {subjects:["Biology","Chemistry","Physics"],jamb:200,waec:"5C6"},
+  "Architecture":              {subjects:["Mathematics","Physics","Fine Arts"],jamb:260,waec:"5C6"},
+  "Mass Communication":        {subjects:["English Language","Literature in English"],jamb:200,waec:"5C6"},
+  "Education (Science)":       {subjects:["Mathematics","Physics","Chemistry","Biology"],jamb:180,waec:"5C6"},
+  "Education (Arts)":          {subjects:["English Language","Literature in English"],jamb:180,waec:"5C6"},
+  "Agriculture":               {subjects:["Biology","Chemistry","Agricultural Science"],jamb:180,waec:"5C6"},
+  "Business Administration":   {subjects:["Mathematics","Economics"],jamb:200,waec:"5C6"},
+  "Political Science":         {subjects:["Government","Economics"],jamb:200,waec:"5C6"},
+  "Microbiology":              {subjects:["Biology","Chemistry","Mathematics"],jamb:220,waec:"5C6"},
+  "Medical Lab Science":       {subjects:["Chemistry","Biology","Mathematics"],jamb:250,waec:"5C6"},
+  "Physiotherapy":             {subjects:["Biology","Chemistry","Physics"],jamb:270,waec:"5C6"},
+  "Radiography":               {subjects:["Biology","Chemistry","Physics"],jamb:250,waec:"5C6"},
+  "Dentistry":                 {subjects:["Biology","Chemistry","Physics"],jamb:300,waec:"6B3"},
+};
+
+const CAREER_PATHS = [
+  {area:"Healthcare & Medicine",    icon:"🏥", examples:"Doctor, Nurse, Pharmacist, Lab Scientist, Physiotherapist"},
+  {area:"Engineering & Technology", icon:"⚙️", examples:"Civil, Mechanical, Electrical, Computer, Chemical Engineer"},
+  {area:"Business & Finance",       icon:"💼", examples:"Accountant, Banker, Entrepreneur, Economist, Auditor"},
+  {area:"Law & Governance",         icon:"⚖️", examples:"Lawyer, Judge, Civil Servant, Diplomat, Politician"},
+  {area:"Education & Research",     icon:"🎓", examples:"Teacher, Lecturer, Researcher, Educational Consultant"},
+  {area:"Science & Agriculture",    icon:"🔬", examples:"Scientist, Agronomist, Food Technologist, Environmental Scientist"},
+  {area:"Media & Communication",    icon:"📢", examples:"Journalist, PR Officer, Broadcaster, Content Creator"},
+  {area:"Arts & Humanities",        icon:"🎭", examples:"Graphic Designer, Writer, Historian, Linguist"},
+];
+
+function CareerCounsellor() {
+  const [view,setView]     = useState("home");   // home|finder|explorer|counsellor
+  const [jambScore,setJambScore] = useState("");
+  const [subjects,setSubjects]   = useState([]);
+  const [interest,setInterest]   = useState("");
+  const [advice,setAdvice]       = useState("");
+  const [loading,setLoading]     = useState(false);
+  const [question,setQuestion]   = useState("");
+
+  const toggleSubject = s => setSubjects(p => p.includes(s)?p.filter(x=>x!==s):[...p,s]);
+
+  // Find matching courses based on subjects + JAMB score
+  const matchedCourses = Object.entries(FACULTIES).filter(([name,info])=>{
+    const scoreOk = !jambScore || parseInt(jambScore) >= info.jamb;
+    const subjMatch = subjects.length===0 || info.subjects.some(s=>subjects.includes(s));
+    return scoreOk && subjMatch;
+  }).sort((a,b)=>b[1].jamb - a[1].jamb);
+
+  const askCounsellor = async () => {
+    if(!question.trim()) return;
+    setLoading(true); setAdvice("");
+    const prompt = `You are an expert Nigerian university admissions and career counsellor.
+
+A student is asking: "${question}"
+
+Context about the student:
+- JAMB score: ${jambScore||"not specified"}
+- Strong subjects: ${subjects.join(", ")||"not specified"}
+- Career interest: ${interest||"not specified"}
+
+Give practical, specific advice for Nigerian students. Include:
+1. Realistic university options in Nigeria (mention specific universities like UNILAG, UI, OAU, UNIBEN, ABU, UNIPORT where relevant)
+2. Minimum JAMB and O-level requirements
+3. Alternative paths if their score is low (polytechnic, college of education, remedial, JUPEB)
+4. Honest assessment — don't sugarcoat low scores
+5. What the career actually involves day-to-day in Nigeria
+6. Earning potential in Nigeria (use ₦)
+
+Be warm but direct. Use Nigerian educational context. Maximum 300 words.`;
+
+    try {
+      const {text} = await callAI([{role:"user",content:prompt}],
+        "You are a knowledgeable Nigerian career and university admissions counsellor. Give accurate, realistic advice.");
+      setAdvice(text);
+    } catch { setAdvice("⚠️ Could not connect. Please try again."); }
+    setLoading(false);
+  };
+
+  if(view==="home") return(
+    <div>
+      <div style={{background:`linear-gradient(135deg,${C.teal}22,${C.card})`,border:`1px solid ${C.teal}44`,borderRadius:16,padding:18,marginBottom:12}}>
+        <div style={{fontSize:28,marginBottom:6}}>🎓</div>
+        <div style={{fontWeight:900,fontSize:17,color:"#14b8a6",marginBottom:4}}>Career Counsellor</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>Find the right course, university and career path based on your WAEC results and JAMB score.</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {[
+          {id:"finder",  icon:"🔍", title:"Course Finder",       sub:"See which courses match your subjects and JAMB score"},
+          {id:"explorer",icon:"🗺️", title:"Career Explorer",     sub:"Explore careers by interest area"},
+          {id:"counsellor",icon:"💬",title:"Ask the Counsellor", sub:"Ask anything about admissions, cut-offs, alternatives"},
+        ].map(item=>(
+          <button key={item.id} onClick={()=>setView(item.id)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",display:"flex",gap:14,alignItems:"center",cursor:"pointer",textAlign:"left",width:"100%",fontFamily:"inherit"}}>
+            <div style={{fontSize:28,flexShrink:0}}>{item.icon}</div>
+            <div>
+              <div style={{fontWeight:800,fontSize:14,color:C.textLight,marginBottom:3}}>{item.title}</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>{item.sub}</div>
+            </div>
+            <div style={{marginLeft:"auto",color:C.muted,fontSize:18}}>›</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if(view==="finder") return(
+    <div>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14}}>
+        <button onClick={()=>setView("home")} style={{background:"none",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+        <div style={{fontWeight:800,fontSize:15,color:C.textLight}}>🔍 Course Finder</div>
+      </div>
+      <Card>
+        <Label>Your JAMB Score (or expected)</Label>
+        <input value={jambScore} onChange={e=>setJambScore(e.target.value)} type="number" min="100" max="400" placeholder="e.g. 260" style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",color:C.textLight,fontSize:14,fontFamily:"inherit",outline:"none",marginBottom:12}}/>
+        <Label>Your Strong Subjects</Label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+          {SUBJECTS.map(s=>(
+            <button key={s} onClick={()=>toggleSubject(s)} style={{background:subjects.includes(s)?C.teal+"22":"transparent",border:`1.5px solid ${subjects.includes(s)?C.teal:C.border}`,borderRadius:20,padding:"4px 10px",color:subjects.includes(s)?"#14b8a6":C.muted,fontWeight:subjects.includes(s)?800:400,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{s.split(" ")[0]}</button>
+          ))}
+        </div>
+      </Card>
+      <div style={{marginBottom:8,fontSize:12,color:C.muted}}>
+        {matchedCourses.length} courses match your profile
+      </div>
+      {matchedCourses.map(([name,info])=>(
+        <Card key={name} style={{marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+            <div style={{fontWeight:800,fontSize:14,color:C.textLight}}>{name}</div>
+            <div style={{background:parseInt(jambScore||"0")>=info.jamb?C.green+"22":C.red+"22",color:parseInt(jambScore||"0")>=info.jamb?C.green:C.red,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,flexShrink:0,marginLeft:8}}>
+              {parseInt(jambScore||"0")>=info.jamb?"✅ Eligible":"Min "+info.jamb}
+            </div>
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginBottom:4}}>Minimum JAMB: {info.jamb} · WAEC: {info.waec}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {info.subjects.map(s=>(
+              <span key={s} style={{background:subjects.includes(s)?C.blue+"22":C.card2,color:subjects.includes(s)?C.sky:C.sub,borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:subjects.includes(s)?700:400}}>{s}</span>
+            ))}
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
+  if(view==="explorer") return(
+    <div>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14}}>
+        <button onClick={()=>setView("home")} style={{background:"none",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+        <div style={{fontWeight:800,fontSize:15,color:C.textLight}}>🗺️ Career Explorer</div>
+      </div>
+      {CAREER_PATHS.map(cp=>(
+        <Card key={cp.area} style={{marginBottom:8,cursor:"pointer"}} onClick={()=>{setView("counsellor");setQuestion("Tell me about careers in "+cp.area+" in Nigeria — what to study, JAMB requirements, job prospects and salary");}}>
+          <div style={{display:"flex",gap:12,alignItems:"center"}}>
+            <div style={{fontSize:28,flexShrink:0}}>{cp.icon}</div>
+            <div>
+              <div style={{fontWeight:800,fontSize:14,color:C.textLight,marginBottom:3}}>{cp.area}</div>
+              <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{cp.examples}</div>
+            </div>
+            <div style={{marginLeft:"auto",color:C.muted,fontSize:18}}>›</div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+
+  if(view==="counsellor") return(
+    <div>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14}}>
+        <button onClick={()=>setView("home")} style={{background:"none",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+        <div style={{fontWeight:800,fontSize:15,color:C.textLight}}>💬 Ask the Counsellor</div>
+      </div>
+      <Card style={{background:C.teal+"0a",borderColor:C.teal+"33",marginBottom:10}}>
+        <div style={{fontSize:12,color:"#14b8a6",lineHeight:1.7}}>Ask anything: "Can I study Medicine with 260 in JAMB?", "What course should I study if I love Mathematics?", "What are alternatives if I don't get admission this year?"</div>
+      </Card>
+      <Card>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+          <div>
+            <Label>JAMB Score</Label>
+            <input value={jambScore} onChange={e=>setJambScore(e.target.value)} type="number" placeholder="e.g. 240" style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",color:C.textLight,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+          </div>
+          <div>
+            <Label>Career Interest</Label>
+            <input value={interest} onChange={e=>setInterest(e.target.value)} placeholder="e.g. Medicine" style={{width:"100%",background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",color:C.textLight,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+          </div>
+        </div>
+        <Label>Your Question</Label>
+        <textarea value={question} onChange={e=>setQuestion(e.target.value)} placeholder="Type your question here..." rows={3} style={{width:"100%",background:C.card2,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"10px 12px",color:C.textLight,fontSize:13,fontFamily:"inherit",resize:"none",outline:"none",marginBottom:10}}/>
+        <Btn onClick={askCounsellor} loading={loading} color={"#14b8a6"} tc="#fff">💬 Get Advice</Btn>
+      </Card>
+      {/* Quick question chips */}
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+        {[
+          "What can I study with 200 in JAMB?",
+          "Best courses for someone who loves Maths",
+          "Alternatives if I fail JAMB",
+          "Courses without Physics",
+          "What is JUPEB and IJMB?",
+          "How to choose between Uni and Poly?",
+        ].map(q=>(
+          <button key={q} onClick={()=>{setQuestion(q);}} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:20,padding:"6px 12px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>{q}</button>
+        ))}
+      </div>
+      {advice&&(
+        <Out text={advice} color={"#14b8a6"} source="ExamAce AI"/>
+      )}
+    </div>
+  );
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEEP LEARNING MODE — AI Teacher
+// Interactive lesson: Explain → Example → Check Understanding → Quiz
+// ═══════════════════════════════════════════════════════════════════════════
+function DeepLearnMode() {
+  const LESSON_STAGES = ["intro","explain","example","check","quiz","summary"];
+
+  const [exam,setExam]       = useState("WAEC");
+  const [subject,setSubject] = useState("");
+  const [topic,setTopic]     = useState("");
+  const [customTopic,setCustomTopic] = useState("");
+  const [stage,setStage]     = useState("select"); // select | loading | teaching
+  const [lessonStage,setLessonStage] = useState(0);
+  const [lesson,setLesson]   = useState(null);     // {intro,explain,example,check,quiz:[],summary}
+  const [loading,setLoading] = useState(false);
+  const [loadingMsg,setLoadingMsg] = useState("");
+  const [userAnswer,setUserAnswer] = useState("");
+  const [feedback,setFeedback] = useState("");
+  const [fbLoading,setFbLoading] = useState(false);
+  const [quizIndex,setQuizIndex] = useState(0);
+  const [quizSel,setQuizSel]   = useState(null);
+  const [quizAnswered,setQuizAnswered] = useState(false);
+  const [quizScore,setQuizScore] = useState(0);
+  const [aiSource,setAiSource] = useState("");
+
+  const topicList = subject&&SYLLABUS[subject] ? SYLLABUS[subject] : [];
+  const activeTopic = customTopic || topic;
+
+  const startLesson = async () => {
+    if(!subject||!activeTopic){ alert("Please select a subject and topic"); return; }
+    setStage("loading"); setLoading(true);
+    setLoadingMsg("Preparing your lesson...");
+
+    const LESSON_PROMPT = `You are an expert Nigerian ${exam} teacher teaching "${activeTopic}" in ${subject}.
+
+Create a complete structured lesson for a secondary school leaver preparing for ${exam}.
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "intro": "A warm 2-sentence welcome that names the topic and why it matters for ${exam}",
+  "explain": "Clear explanation in 200-250 words. Use Nigerian examples (₦, Lagos, Kano, Nigeria). Break into short paragraphs. Include the key formula or rule if applicable. Use **bold** for key terms.",
+  "example": "One fully worked ${exam}-style example with COMPLETE step-by-step solution. Show ALL working. Format:\n**Question:** [question]\n**Step 1:** [step]\n**Step 2:** [step]\n**Answer:** [answer with units]",
+  "check": "A single short open-ended question to test understanding before the quiz. Should be answerable in 1-3 sentences.",
+  "quiz": [
+    {"q":"MCQ question 1 in ${exam} style","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"A","explanation":"Why A is correct and others wrong"},
+    {"q":"MCQ question 2","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"B","explanation":"..."},
+    {"q":"MCQ question 3","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"C","explanation":"..."},
+    {"q":"MCQ question 4","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"A","explanation":"..."},
+    {"q":"MCQ question 5","options":{"A":"...","B":"...","C":"...","D":"..."},"answer":"D","explanation":"..."}
+  ],
+  "summary": "5 bullet-point summary of key things to remember for ${exam}. Start each with ✅"
+}`;
+
+    try {
+      const msgs = [
+        {role:"system", content:`You are an expert Nigerian ${exam}/${subject} teacher. Always respond with valid JSON only, no markdown code blocks, no extra text.`},
+        {role:"user", content:LESSON_PROMPT}
+      ];
+      const {text,source} = await callAI(msgs, `You are a Nigerian ${exam} teacher. Respond with valid JSON only.`);
+      setAiSource(source);
+
+      // Parse JSON — strip any markdown fences if present
+      const clean = text.replace(/```json|```/g,"").trim();
+      const parsed = JSON.parse(clean);
+
+      // Validate structure
+      if(!parsed.intro||!parsed.explain||!parsed.quiz?.length) throw new Error("Incomplete lesson");
+
+      setLesson(parsed);
+      setLessonStage(0);
+      setStage("teaching");
+      setQuizIndex(0); setQuizSel(null); setQuizAnswered(false); setQuizScore(0);
+    } catch(e) {
+      console.error("Lesson error:", e);
+      alert("Could not load lesson. Please try again.");
+      setStage("select");
+    }
+    setLoading(false);
+  };
+
+  const checkAnswer = async () => {
+    if(!userAnswer.trim()) return;
+    setFbLoading(true); setFeedback("");
+    try {
+      const {text} = await callAI(
+        `A student learning "${activeTopic}" in ${exam} ${subject} answered a comprehension check:
+
+Question: ${lesson.check}
+Student answer: "${userAnswer}"
+
+Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Correct any misunderstanding clearly. (3) Give one encouraging tip for ${exam}.`,
+        `You are a kind but accurate ${exam} teacher.`
+      );
+      setFeedback(text);
+    } catch { setFeedback("Good attempt! Review the explanation above and try to connect the key concept to the example shown."); }
+    setFbLoading(false);
+  };
+
+  const stageLabel = ["📖 Introduction","📚 Explanation","✏️ Worked Example","🤔 Check","📝 Mini Quiz","🏁 Summary"];
+
+  // ── SELECT SCREEN ─────────────────────────────────────────────────────────
+  if(stage==="select") return(
+    <div>
+      <Card style={{background:`linear-gradient(135deg,${C.purple}22,${C.card})`,borderColor:C.purple+"44"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
+          <div style={{fontSize:32}}>🎓</div>
+          <div>
+            <div style={{fontWeight:900,fontSize:17,color:C.purple}}>Deep Learning Mode</div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>AI teaches you a topic from scratch — explanation, examples, check, then quiz</div>
+          </div>
+        </div>
+        <div style={{background:C.purple+"18",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.purple,lineHeight:1.7}}>
+          📖 Explain → ✏️ Worked Example → 🤔 Check Understanding → 📝 Mini Quiz → 🏁 Summary
+        </div>
+      </Card>
+
+      <Card>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+          <div><Label>Exam</Label><Sel value={exam} onChange={setExam} options={EXAMS} placeholder="Exam"/></div>
+          <div><Label>Subject</Label><Sel value={subject} onChange={v=>{setSubject(v);setTopic("");setCustomTopic("");}} options={SUBJECTS} placeholder="Subject"/></div>
+        </div>
+        {topicList.length>0&&(
+          <div style={{marginBottom:12}}>
+            <Label>Topic</Label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+              {topicList.map(t=>(
+                <button key={t} onClick={()=>{setTopic(t);setCustomTopic("");}} style={{background:topic===t?C.purple+"33":"transparent",border:`1.5px solid ${topic===t?C.purple:C.border}`,borderRadius:20,padding:"5px 12px",color:topic===t?C.purple:C.muted,fontWeight:topic===t?800:400,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{t}</button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{marginBottom:16}}>
+          <Label>Or type any topic</Label>
+          <Inp value={customTopic} onChange={v=>{setCustomTopic(v);setTopic("");}} placeholder={`e.g. ${subject?"Photosynthesis, Quadratic equations, Supply and demand":"Select subject first"}`}/>
+        </div>
+        <Btn onClick={startLesson} loading={loading} color={C.purple} tc="#fff">
+          🎓 Start Lesson{activeTopic?" — "+activeTopic:""}
+        </Btn>
+      </Card>
+
+      {/* Recent topic suggestions */}
+      <Card>
+        <Label c={C.muted}>🔥 High-frequency {exam} topics</Label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:8}}>
+          {[
+            ["Quadratic Equations","Mathematics"],
+            ["Photosynthesis","Biology"],
+            ["Supply & Demand","Economics"],
+            ["Newton's Laws","Physics"],
+            ["Ionic Bonding","Chemistry"],
+            ["Nigerian Civil War","History"],
+            ["Essay Writing","English Language"],
+            ["Trigonometry","Mathematics"],
+          ].map(([t,s])=>(
+            <button key={t} onClick={()=>{setSubject(s);setCustomTopic(t);setTopic("");}} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:20,padding:"5px 12px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{t}</button>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+
+  // ── LOADING SCREEN ────────────────────────────────────────────────────────
+  if(stage==="loading") return(
+    <Card style={{textAlign:"center",padding:48,background:`linear-gradient(135deg,${C.purple}18,${C.card})`}}>
+      <div style={{fontSize:48,marginBottom:12,animation:"pulse 1.5s infinite"}}>🎓</div>
+      <div style={{fontWeight:800,fontSize:16,color:C.purple,marginBottom:6}}>Preparing your lesson...</div>
+      <div style={{fontSize:13,color:C.muted,marginBottom:20}}>{activeTopic} · {subject} · {exam}</div>
+      <div style={{display:"flex",justifyContent:"center",gap:6}}>
+        {[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:C.purple,animation:`blink 1.2s ${i*0.3}s infinite`}}/>)}
+      </div>
+      <div style={{marginTop:16,fontSize:12,color:C.sub}}>AI teacher is preparing explanation, examples and quiz questions...</div>
+    </Card>
+  );
+
+  // ── TEACHING SCREEN ───────────────────────────────────────────────────────
+  if(!lesson) return null;
+  const quizQ = lesson.quiz?.[quizIndex];
+
+  return(
+    <div>
+      {/* Progress bar */}
+      <div style={{marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.purple}}>{stageLabel[lessonStage]}</div>
+          <div style={{display:"flex",gap:4}}>
+            {LESSON_STAGES.map((_,i)=>(
+              <div key={i} style={{width:28,height:5,borderRadius:3,background:i<=lessonStage?C.purple:C.border,transition:"background .3s"}}/>
+            ))}
+          </div>
+        </div>
+        <div style={{fontSize:11,color:C.muted,fontWeight:600}}>{activeTopic} · {subject} · {exam}</div>
+      </div>
+
+      {/* Stage 0: Introduction */}
+      {lessonStage===0&&(
+        <Card style={{background:`linear-gradient(135deg,${C.purple}18,${C.card})`,borderColor:C.purple+"44"}}>
+          <div style={{fontSize:32,marginBottom:8}}>👨‍🏫</div>
+          <div style={{fontSize:15,color:C.textLight,lineHeight:1.8,marginBottom:16}}>{lesson.intro}</div>
+          <Btn onClick={()=>setLessonStage(1)} color={C.purple} tc="#fff">📚 Start Learning →</Btn>
+        </Card>
+      )}
+
+      {/* Stage 1: Explanation */}
+      {lessonStage===1&&(
+        <div>
+          <Card style={{borderColor:C.blue+"44"}}>
+            <Label c={C.blue}>📚 Explanation</Label>
+            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.explain,false)}</div>
+          </Card>
+          <Btn onClick={()=>setLessonStage(2)} color={C.blue} tc="#fff">✏️ See Worked Example →</Btn>
+        </div>
+      )}
+
+      {/* Stage 2: Worked Example */}
+      {lessonStage===2&&(
+        <div>
+          <Card style={{background:C.gold+"0a",borderColor:C.gold+"44"}}>
+            <Label c={C.gold}>✏️ Worked Example</Label>
+            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.example,false)}</div>
+          </Card>
+          <Btn onClick={()=>setLessonStage(3)} color={C.gold} tc="#000">🤔 Check My Understanding →</Btn>
+        </div>
+      )}
+
+      {/* Stage 3: Understanding Check */}
+      {lessonStage===3&&(
+        <div>
+          <Card style={{borderColor:C.orange+"44"}}>
+            <Label c={C.orange}>🤔 Check Your Understanding</Label>
+            <div style={{fontSize:14,fontWeight:700,color:C.textLight,marginBottom:12,lineHeight:1.7}}>{lesson.check}</div>
+            <textarea value={userAnswer} onChange={e=>setUserAnswer(e.target.value)} placeholder="Type your answer here..." style={{width:"100%",background:C.card2,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"12px 14px",color:C.textLight,fontSize:13,fontFamily:"inherit",minHeight:80,resize:"vertical",outline:"none"}}/>
+            {!feedback&&<Btn onClick={checkAnswer} loading={fbLoading} color={C.orange} tc="#fff" style={{marginTop:8}}>✅ Submit Answer</Btn>}
+            {feedback&&(
+              <>
+                <Card style={{background:C.blue+"11",borderColor:C.blue+"33",marginTop:10}}>
+                  <Label c={C.blue}>👨‍🏫 Teacher Feedback</Label>
+                  <div style={{fontSize:13,color:C.textLight,lineHeight:1.7}}>{feedback}</div>
+                </Card>
+                <Btn onClick={()=>setLessonStage(4)} color={C.purple} tc="#fff" style={{marginTop:8}}>📝 Take the Mini Quiz →</Btn>
+              </>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* Stage 4: Mini Quiz */}
+      {lessonStage===4&&quizQ&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <Label c={C.green}>📝 Mini Quiz — Q{quizIndex+1}/{lesson.quiz.length}</Label>
+            <span style={{fontSize:12,color:C.green,fontWeight:700}}>✅ {quizScore}/{lesson.quiz.length}</span>
+          </div>
+          <div style={{background:C.border,borderRadius:4,height:5,marginBottom:12}}>
+            <div style={{background:C.green,height:"100%",borderRadius:4,width:(quizIndex/lesson.quiz.length*100)+"%",transition:"width .4s"}}/>
+          </div>
+          <Card><div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{quizQ.q}</div></Card>
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+            {["A","B","C","D"].map(l=>{
+              const t=quizQ.options?.[l]||""; if(!t) return null;
+              const ok=l===quizQ.answer, isSel=quizSel===l;
+              let bg=C.card, border=C.border, color=C.textLight;
+              if(quizAnswered){if(ok){bg=C.green+"22";border=C.green;color=C.green;}else if(isSel){bg=C.red+"22";border=C.red;color=C.red;}}
+              else if(isSel){bg=C.purple+"18";border=C.purple;}
+              return(
+                <button key={l} onClick={()=>{
+                  if(quizAnswered)return;
+                  setQuizSel(l);setQuizAnswered(true);
+                  if(l===quizQ.answer) setQuizScore(s=>s+1);
+                }} style={{background:bg,border:`2px solid ${border}`,borderRadius:12,padding:"12px 14px",color,fontSize:13,textAlign:"left",cursor:quizAnswered?"default":"pointer",display:"flex",gap:10,alignItems:"center",fontFamily:"inherit"}}>
+                  <span style={{width:26,height:26,borderRadius:"50%",background:quizAnswered&&ok?C.green:quizAnswered&&isSel?C.red:C.card2,color:quizAnswered&&(ok||isSel)?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,flexShrink:0}}>
+                    {quizAnswered?(ok?"✓":isSel?"✗":l):l}
+                  </span>
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+          {quizAnswered&&(
+            <>
+              <Card style={{background:quizSel===quizQ.answer?C.green+"18":C.red+"18",borderColor:quizSel===quizQ.answer?C.green:C.red,marginBottom:10}}>
+                <div style={{fontWeight:700,color:quizSel===quizQ.answer?C.green:C.red,marginBottom:4}}>{quizSel===quizQ.answer?"✅ Correct!":"❌ Wrong — Answer: "+quizQ.answer}</div>
+                <div style={{fontSize:12,color:C.textLight,lineHeight:1.6}}>{quizQ.explanation}</div>
+              </Card>
+              <button onClick={()=>{
+                if(quizIndex+1>=lesson.quiz.length){setLessonStage(5);}
+                else{setQuizIndex(i=>i+1);setQuizSel(null);setQuizAnswered(false);}
+              }} style={{width:"100%",background:C.purple,border:"none",borderRadius:12,padding:"13px 0",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+                {quizIndex+1>=lesson.quiz.length?"🏁 See Summary →":"Next Question →"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Stage 5: Summary */}
+      {lessonStage===5&&(
+        <div>
+          <Card style={{background:`linear-gradient(135deg,${C.green}18,${C.card})`,borderColor:C.green+"44"}}>
+            <div style={{textAlign:"center",marginBottom:16}}>
+              <div style={{fontSize:48,marginBottom:8}}>{quizScore>=4?"🏆":quizScore>=3?"🎯":"📚"}</div>
+              <div style={{fontWeight:900,fontSize:18,color:quizScore>=4?C.gold:quizScore>=3?C.green:C.orange}}>
+                {quizScore>=4?"Excellent! 🌟":quizScore>=3?"Good work! 👍":"Keep studying! 💪"}
+              </div>
+              <div style={{fontSize:13,color:C.muted,marginTop:4}}>Quiz score: {quizScore}/{lesson.quiz.length}</div>
+            </div>
+            <Label c={C.green}>🏁 Key Takeaways</Label>
+            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap",marginBottom:16}}>{fmt(lesson.summary,false)}</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={()=>{setStage("select");setLesson(null);setLessonStage(0);setFeedback("");setUserAnswer("");}} style={{flex:1,background:C.purple,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🎓 New Topic</button>
+              <button onClick={()=>{
+                sessionStorage.setItem("examace_show_me","Explain "+activeTopic+" in "+subject+" with more examples for "+exam);
+                alert("Switch to Ask AI tab for more practice!");
+              }} style={{flex:1,background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:12,padding:"12px 0",color:C.sky,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>💬 Ask AI More</button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HOME SCREEN — Daily question + today's goal + quick actions
+// Shown as first tab. Designed for <30 second daily habit.
+// ═══════════════════════════════════════════════════════════════════════════
+function HomeScreen({ user, onNavigate }) {
+  const [dailyQ,setDailyQ]     = useState(null);
+  const [dailySel,setDailySel] = useState(null);
+  const [dailyDone,setDailyDone]= useState(false);
+  const [loading,setLoading]   = useState(true);
+  const subject = user?.subjects?.[0] || "Mathematics";
+  const exam    = user?.exam || "WAEC";
+  const lvl     = getLevelClient(user?.xp||0);
+  const stats   = user?.stats || {};
+  const dueReviews = getDueReviews().length;
+
+  // Check if daily question already answered today
+  const DAILY_DONE_KEY = `examace_daily_done_${new Date().toDateString()}`;
+
+  useEffect(()=>{
+    const done = localStorage.getItem(DAILY_DONE_KEY);
+    if(done){ setDailyDone(true); setLoading(false); return; }
+    fetchDailyQuestion(subject, exam)
+      .then(d=>{ setDailyQ(d.question); setLoading(false); })
+      .catch(()=>setLoading(false));
+  },[]);
+
+  const answerDaily = (letter) => {
+    if(dailySel) return;
+    setDailySel(letter);
+    localStorage.setItem(DAILY_DONE_KEY, "1");
+    setTimeout(()=>setDailyDone(true), 3000);
+  };
+
+  // Days to exam countdown
+  const EXAM_DATES = { "WAEC": new Date("2026-05-04"), "NECO": new Date("2026-06-02"), "JAMB": new Date("2026-04-26") };
+  const examDate = EXAM_DATES[exam] || EXAM_DATES["WAEC"];
+  const daysLeft = Math.max(0, Math.ceil((examDate - Date.now()) / 86400000));
+  const dailyTarget = Math.min(20, Math.max(5, Math.ceil((daysLeft > 0 ? 200 / daysLeft : 20))));
+
+  return(
+    <div>
+      {/* Greeting + streak */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div>
+          <div style={{fontWeight:900,fontSize:18,color:C.textLight}}>Hello, {user?.name?.split(" ")[0]} 👋</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Ready to study? {exam} in <span style={{color:daysLeft<30?C.red:C.gold,fontWeight:700}}>{daysLeft} days</span></div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          {(user?.currentStreak||0)>0?(
+            <div style={{background:C.orange+"22",border:`1px solid ${C.orange}44`,borderRadius:20,padding:"6px 12px",display:"inline-block"}}>
+              <span style={{fontWeight:900,fontSize:18,color:C.orange}}>🔥{user.currentStreak}</span>
+              <span style={{fontSize:10,color:C.orange,marginLeft:3}}>day streak</span>
+            </div>
+          ):(
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:20,padding:"6px 12px",fontSize:11,color:C.muted}}>Start your streak today!</div>
+          )}
+        </div>
+      </div>
+
+      {/* Today's goal progress */}
+      <Card style={{marginBottom:12,background:`linear-gradient(135deg,${lvl.color}14,${C.card})`,borderColor:lvl.color+"33"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.textLight}}>Today's goal</div>
+          <div style={{fontSize:11,color:C.muted}}>{dailyTarget} questions recommended</div>
+        </div>
+        <div style={{background:C.border,borderRadius:6,height:8,overflow:"hidden"}}>
+          <div style={{background:lvl.color,height:"100%",width:Math.min(100,(stats.todayAnswered||0)/dailyTarget*100)+"%",borderRadius:6,transition:"width 1s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:11,color:C.muted}}>
+          <span>{stats.todayAnswered||0} answered today</span>
+          <span>{Math.max(0,dailyTarget-(stats.todayAnswered||0))} to go</span>
+        </div>
+      </Card>
+
+      {/* DAILY QUESTION — the core habit loop */}
+      {!loading&&dailyQ&&!dailyDone&&(
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:C.gold,flexShrink:0}}/>
+            <div style={{fontSize:12,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:1}}>Question of the Day</div>
+            <div style={{fontSize:10,color:C.muted,marginLeft:"auto"}}>{exam} · {dailyQ.topic||subject}</div>
+          </div>
+          <Card style={{borderColor:C.gold+"44",background:C.gold+"08"}}>
+            <div style={{fontSize:15,fontWeight:600,color:C.textLight,lineHeight:1.8,marginBottom:12}}>{dailyQ.q}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:7}}>
+              {["A","B","C","D"].map(l=>{
+                const t=(dailyQ.options||{})[l]||""; if(!t) return null;
+                const ok=l===dailyQ.answer, isSel=dailySel===l;
+                let bg=C.card, border=C.border, color=C.textLight;
+                if(dailySel){if(ok){bg=C.green+"22";border=C.green;color=C.green;}else if(isSel){bg=C.red+"22";border=C.red;color=C.red;}}
+                return(
+                  <button key={l} onClick={()=>answerDaily(l)} style={{background:bg,border:`1.5px solid ${border}`,borderRadius:10,padding:"10px 12px",color,fontSize:13,textAlign:"left",cursor:dailySel?"default":"pointer",display:"flex",gap:8,alignItems:"center",fontFamily:"inherit"}}>
+                    <span style={{width:22,height:22,borderRadius:"50%",background:dailySel&&ok?C.green:dailySel&&isSel?C.red:C.card2,color:dailySel&&(ok||isSel)?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:11,flexShrink:0}}>
+                      {dailySel?(ok?"✓":isSel?"✗":l):l}
+                    </span>
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+            {dailySel&&(
+              <div style={{marginTop:10,background:dailySel===dailyQ.answer?C.green+"18":C.red+"18",borderRadius:10,padding:"10px 12px",borderLeft:`3px solid ${dailySel===dailyQ.answer?C.green:C.red}`}}>
+                <div style={{fontWeight:700,color:dailySel===dailyQ.answer?C.green:C.red,marginBottom:3}}>{dailySel===dailyQ.answer?"✅ Correct! +5 XP":"❌ Answer: "+dailyQ.answer}</div>
+                <div style={{fontSize:12,color:C.textLight,lineHeight:1.6}}>{dailyQ.explanation}</div>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* Daily done state */}
+      {dailyDone&&(
+        <Card style={{background:C.green+"11",borderColor:C.green+"33",marginBottom:14,textAlign:"center",padding:"16px 12px"}}>
+          <div style={{fontSize:24,marginBottom:4}}>✅</div>
+          <div style={{fontWeight:800,fontSize:14,color:C.green}}>Daily question done!</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>Come back tomorrow for a new one</div>
+        </Card>
+      )}
+
+      {/* Quick actions */}
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.8}}>Quick Practice</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {[
+            {icon:"📝",label:"Past Questions Quiz",sub:"WAEC/NECO/JAMB",color:C.blue,action:"practice"},
+            {icon:"🖥️",label:"JAMB CBT Mock",sub:"180 questions · 2hrs",color:C.purple,action:"practice"},
+            {icon:"🎓",label:"Deep Learning",sub:"AI teaches a topic",color:C.teal,action:"learn"},
+            {icon:"🧭",label:"Career Advisor",sub:"Courses & universities",color:C.orange,action:"career"},
+          ].map(({icon,label,sub,color,action})=>(
+            <button key={label} onClick={()=>onNavigate(action)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 12px",textAlign:"left",cursor:"pointer",fontFamily:"inherit"}}>
+              <div style={{fontSize:24,marginBottom:6}}>{icon}</div>
+              <div style={{fontSize:13,fontWeight:700,color:C.textLight,marginBottom:2}}>{label}</div>
+              <div style={{fontSize:11,color:C.muted}}>{sub}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Due reviews alert */}
+      {dueReviews>0&&(
+        <button onClick={()=>onNavigate("study")} style={{width:"100%",background:C.purple+"18",border:`1px solid ${C.purple}33`,borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",fontFamily:"inherit",marginBottom:10}}>
+          <div style={{fontSize:22}}>🔁</div>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.purple}}>{dueReviews} review{dueReviews>1?"s":""} due</div>
+            <div style={{fontSize:11,color:C.muted}}>Questions you got wrong — ready to retry</div>
+          </div>
+          <div style={{marginLeft:"auto",fontSize:13,color:C.purple}}>→</div>
+        </button>
+      )}
+
+      {/* Snap shortcut */}
+      <button onClick={()=>onNavigate("snap")} style={{width:"100%",background:C.green+"11",border:`1px solid ${C.green}33`,borderRadius:14,padding:"12px 16px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",fontFamily:"inherit"}}>
+        <div style={{fontSize:22}}>📸</div>
+        <div style={{textAlign:"left"}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.green}}>Snap a question</div>
+          <div style={{fontSize:11,color:C.muted}}>Photo any question — AI solves with full working</div>
+        </div>
+        <div style={{marginLeft:"auto",fontSize:13,color:C.green}}>→</div>
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHALLENGE SHARE CARD — shown after good quiz score
+// ═══════════════════════════════════════════════════════════════════════════
+function ChallengeShareCard({ subject, exam, year, score, total, pct, questions, onClose }) {
+  const [state,setState]   = useState("idle"); // idle | creating | ready | copied
+  const [link,setLink]     = useState("");
+  const [error,setError]   = useState("");
+  const gradeColor = pct>=75?C.green:pct>=60?C.gold:C.orange;
+
+  const handleCreate = async () => {
+    setState("creating");
+    const data = await createChallenge(subject, exam, year, score, total, pct, questions);
+    if(!data){ setError("Could not create challenge. Try again."); setState("idle"); return; }
+    const fullLink = `${window.location.origin}/challenge/${data.challengeId}`;
+    setLink(fullLink);
+    setState("ready");
+  };
+
+  const share = () => {
+    const text = `🏆 I scored ${score}/${total} (${pct}%) on ${exam} ${subject} — can you beat me?
+
+Take the same quiz here 👇
+${link}
+
+Powered by ExamAce AI 🇳🇬`;
+    if(navigator.share){ navigator.share({ title:"ExamAce Challenge", text }); }
+    else {
+      navigator.clipboard.writeText(text);
+      setState("copied");
+      setTimeout(()=>setState("ready"), 2500);
+    }
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:24,padding:28,maxWidth:360,width:"100%",animation:"fadeUp .3s ease"}}>
+        {/* Score celebration */}
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <div style={{fontSize:52,marginBottom:8}}>{pct>=75?"🏆":pct>=60?"🎯":"💪"}</div>
+          <div style={{fontWeight:900,fontSize:22,color:gradeColor,marginBottom:4}}>{pct}% — {gradeFromPct(pct).g}</div>
+          <div style={{fontSize:13,color:C.muted}}>{score}/{total} correct · {exam} {subject} {year||""}</div>
+        </div>
+
+        {/* Challenge prompt */}
+        <div style={{background:C.purple+"18",border:`1px solid ${C.purple}33`,borderRadius:14,padding:14,marginBottom:16,textAlign:"center"}}>
+          <div style={{fontWeight:800,fontSize:14,color:C.purple,marginBottom:4}}>⚔️ Challenge a Friend!</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>Generate a link — your friend plays the exact same 10 questions. See if they can beat your score.</div>
+        </div>
+
+        {error&&<div style={{background:C.red+"18",borderRadius:10,padding:"8px 12px",color:C.red,fontSize:12,marginBottom:12}}>{error}</div>}
+
+        {state==="idle"&&(
+          <Btn onClick={handleCreate} color={C.purple} tc="#fff">⚔️ Create Challenge Link</Btn>
+        )}
+
+        {state==="creating"&&(
+          <div style={{textAlign:"center",padding:"14px 0",color:C.muted,fontSize:13}}>
+            <span style={{animation:"spin 1s linear infinite",display:"inline-block",marginRight:8}}>⏳</span>
+            Creating your challenge...
+          </div>
+        )}
+
+        {(state==="ready"||state==="copied")&&(
+          <>
+            {/* Link preview */}
+            <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
+              <div style={{flex:1,fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{link}</div>
+              <button onClick={()=>{navigator.clipboard.writeText(link);setState("copied");setTimeout(()=>setState("ready"),2000);}} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                {state==="copied"?"✅":"Copy"}
+              </button>
+            </div>
+            {/* Share button */}
+            <button onClick={share} style={{width:"100%",background:C.wa,border:"none",borderRadius:14,padding:"14px 0",color:"#fff",fontWeight:900,fontSize:15,cursor:"pointer",fontFamily:"inherit",marginBottom:10}}>
+              {state==="copied"?"✅ Copied to clipboard!":"💬 Share on WhatsApp"}
+            </button>
+            <div style={{fontSize:11,color:C.sub,textAlign:"center",marginBottom:12}}>Your friend plays without creating an account</div>
+          </>
+        )}
+
+        <button onClick={onClose} style={{width:"100%",background:"transparent",border:`1px solid ${C.border}`,borderRadius:14,padding:"11px 0",color:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+          Maybe Later
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHALLENGE PLAY SCREEN — guest plays without account
+// Shown when URL is /challenge/XXXXXX
+// ═══════════════════════════════════════════════════════════════════════════
+function ChallengePlay({ challengeId }) {
+  const [stage,setStage]       = useState("loading"); // loading|name|playing|results|signup
+  const [challenge,setChallenge]=useState(null);
+  const [guestName,setGuestName]=useState("");
+  const [cur,setCur]           = useState(0);
+  const [answers,setAnswers]   = useState({});
+  const [sel,setSel]           = useState(null);
+  const [answered,setAnswered] = useState(false);
+  const [results,setResults]   = useState(null);
+  const [error,setError]       = useState("");
+  const [submitting,setSubmitting]=useState(false);
+
+  useEffect(()=>{
+    fetchChallenge(challengeId)
+      .then(d=>{ setChallenge(d); setStage("name"); })
+      .catch(e=>{ setError(e.message); setStage("error"); });
+  },[challengeId]);
+
+  const startPlay = () => {
+    if(!guestName.trim()){ alert("Please enter your name"); return; }
+    setStage("playing"); setCur(0); setSel(null); setAnswered(false);
+  };
+
+  const handleAnswer = (letter) => {
+    if(answered) return;
+    setSel(letter);
+    setAnswered(true);
+    setAnswers(prev=>({...prev,[cur]:letter}));
+  };
+
+  const next = async () => {
+    if(cur+1 < (challenge?.questions?.length||0)){
+      setCur(c=>c+1); setSel(null); setAnswered(false);
+    } else {
+      // Submit all answers
+      setSubmitting(true);
+      try {
+        const data = await submitChallenge(challengeId, answers, guestName.trim());
+        setResults(data);
+        setStage("results");
+      } catch(e){ alert("Could not submit. Please try again."); }
+      setSubmitting(false);
+    }
+  };
+
+  const q = challenge?.questions?.[cur];
+  const challenger = challenge?.challenger;
+
+  if(stage==="loading") return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12}}>
+      <div style={{fontSize:40,animation:"pulse 1.5s infinite"}}>🏆</div>
+      <div style={{color:C.muted,fontSize:13}}>Loading challenge...</div>
+    </div>
+  );
+
+  if(stage==="error") return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <Card style={{textAlign:"center",maxWidth:340}}>
+        <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+        <div style={{fontWeight:800,color:C.red,marginBottom:8}}>Challenge not found</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:16}}>{error}</div>
+        <button onClick={()=>window.location.href="/"} style={{background:C.gold,border:"none",borderRadius:12,padding:"12px 28px",color:"#000",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Open ExamAce AI</button>
+      </Card>
+    </div>
+  );
+
+  if(stage==="name") return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{width:"100%",maxWidth:380}}>
+        {/* ExamAce branding */}
+        <div style={{textAlign:"center",marginBottom:24}}>
+          <div style={{width:56,height:56,background:`linear-gradient(135deg,${C.gold},${C.goldD})`,borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,margin:"0 auto 10px",boxShadow:`0 0 24px ${C.gold}44`}}>🏆</div>
+          <div style={{fontWeight:900,fontSize:22,color:C.textLight}}>ExamAce <span style={{color:C.gold}}>AI</span></div>
+          <div style={{fontSize:11,color:C.sub,marginTop:2}}>Nigeria's #1 WAEC · NECO · JAMB Tutor</div>
+        </div>
+
+        <Card style={{background:`linear-gradient(135deg,${C.purple}22,${C.card})`,borderColor:C.purple+"44",marginBottom:12}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:32,marginBottom:6}}>⚔️</div>
+            <div style={{fontWeight:900,fontSize:16,color:C.purple,marginBottom:4}}>You've been challenged!</div>
+            <div style={{fontWeight:700,fontSize:14,color:C.textLight,marginBottom:8}}>
+              {challenger?.name} scored <span style={{color:C.gold}}>{challenger?.score}/{challenger?.total} ({challenger?.pct}%)</span>
+            </div>
+            <div style={{fontSize:12,color:C.muted}}>
+              {challenge?.exam} {challenge?.subject} {challenge?.year||""} · {challenge?.totalQ} questions
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <Label>Enter your name to play</Label>
+          <Inp value={guestName} onChange={setGuestName} placeholder="e.g. Adaeze Okonkwo"/>
+          <div style={{marginTop:12}}>
+            <Btn onClick={startPlay} color={C.purple} tc="#fff">⚔️ Accept Challenge</Btn>
+          </div>
+          <div style={{marginTop:10,fontSize:11,color:C.sub,textAlign:"center"}}>No account needed · Takes about 3 minutes</div>
+        </Card>
+      </div>
+    </div>
+  );
+
+  if(stage==="playing"&&q) return(
+    <div style={{minHeight:"100vh",background:C.bg,padding:"16px 14px",paddingBottom:40}}>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+        <div style={{width:36,height:36,background:`linear-gradient(135deg,${C.gold},${C.goldD})`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏆</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:14,color:C.textLight}}>ExamAce Challenge</div>
+          <div style={{fontSize:11,color:C.muted}}>Beating {challenger?.name}'s {challenger?.pct}%</div>
+        </div>
+        <div style={{fontSize:12,color:C.gold,fontWeight:700}}>Q{cur+1}/{challenge.questions.length}</div>
+      </div>
+
+      {/* Progress */}
+      <div style={{background:C.border,borderRadius:4,height:5,marginBottom:14}}>
+        <div style={{background:C.purple,height:"100%",borderRadius:4,width:`${(cur/challenge.questions.length)*100}%`,transition:"width .4s"}}/>
+      </div>
+
+      {/* Question */}
+      <Card style={{background:C.purple+"0a",borderColor:C.purple+"33",marginBottom:10}}>
+        <div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
+      </Card>
+
+      {/* Options */}
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+        {["A","B","C","D"].map(l=>{
+          const t=(q.options||{})[l]||""; if(!t) return null;
+          const isSel=sel===l;
+          return(
+            <button key={l} onClick={()=>handleAnswer(l)} style={{
+              background:isSel?C.purple+"22":C.card,
+              border:`2px solid ${isSel?C.purple:C.border}`,
+              borderRadius:12,padding:"12px 14px",color:C.textLight,
+              fontSize:13,textAlign:"left",cursor:answered?"default":"pointer",
+              display:"flex",gap:10,alignItems:"center",fontFamily:"inherit"
+            }}>
+              <span style={{width:26,height:26,borderRadius:"50%",background:isSel?C.purple:C.card2,color:isSel?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,flexShrink:0}}>{l}</span>
+              {t}
+            </button>
+          );
+        })}
+      </div>
+
+      {answered&&(
+        <button onClick={next} disabled={submitting} style={{width:"100%",background:C.purple,border:"none",borderRadius:14,padding:"14px 0",color:"#fff",fontWeight:900,fontSize:15,cursor:"pointer",fontFamily:"inherit"}}>
+          {submitting?"Submitting...":(cur+1>=challenge.questions.length?"🏁 See Results →":"Next →")}
+        </button>
+      )}
+    </div>
+  );
+
+  if(stage==="results"&&results) {
+    const { summary } = results;
+    const myPct = summary.pct;
+    const theirPct = summary.challenger.pct;
+    const myColor = summary.beat?C.green:summary.tied?C.gold:C.orange;
+
+    return(
+      <div style={{minHeight:"100vh",background:C.bg,padding:"20px 14px",paddingBottom:60}}>
+        <style>{`*{box-sizing:border-box;margin:0;padding:0}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}`}</style>
+
+        {/* Result header */}
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <div style={{fontSize:56,marginBottom:8,animation:"fadeUp .4s ease"}}>{summary.beat?"🏆":summary.tied?"🤝":"💪"}</div>
+          <div style={{fontWeight:900,fontSize:20,color:myColor,marginBottom:6}}>{summary.message}</div>
+          <div style={{fontSize:13,color:C.muted}}>{challenge.exam} {challenge.subject}</div>
+        </div>
+
+        {/* Score comparison */}
+        <Card style={{marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",gap:8,alignItems:"center",textAlign:"center"}}>
+            <div>
+              <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{summary.guestName}</div>
+              <div style={{fontWeight:900,fontSize:32,color:myColor}}>{summary.correct}</div>
+              <div style={{fontSize:11,color:C.muted}}>/{summary.total}</div>
+              <div style={{fontWeight:700,fontSize:14,color:myColor,marginTop:2}}>{myPct}%</div>
+            </div>
+            <div style={{fontSize:20,color:C.border}}>vs</div>
+            <div>
+              <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{summary.challenger.name}</div>
+              <div style={{fontWeight:900,fontSize:32,color:C.purple}}>{summary.challenger.score}</div>
+              <div style={{fontSize:11,color:C.muted}}>/{summary.total}</div>
+              <div style={{fontWeight:700,fontSize:14,color:C.purple,marginTop:2}}>{theirPct}%</div>
+            </div>
+          </div>
+        </Card>
+
+        {/* Question review */}
+        <Card style={{marginBottom:16}}>
+          <Label>Question Review</Label>
+          {results.results.map((r,i)=>(
+            <div key={i} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}`,display:"flex",gap:8,alignItems:"flex-start"}}>
+              <div style={{width:20,height:20,borderRadius:"50%",background:r.correct?C.green+"22":C.red+"22",color:r.correct?C.green:C.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0,marginTop:2}}>{r.correct?"✓":"✗"}</div>
+              <div>
+                <div style={{fontSize:12,color:C.textLight,marginBottom:2,lineHeight:1.5}}>{r.q}</div>
+                {!r.correct&&<div style={{fontSize:11,color:C.green}}>Answer: {r.answer} — {(r.options||{})[r.answer]}</div>}
+                {r.explanation&&<div style={{fontSize:11,color:C.sub,marginTop:2,lineHeight:1.5}}>{r.explanation}</div>}
+              </div>
+            </div>
+          ))}
+        </Card>
+
+        {/* Signup CTA */}
+        <Card style={{background:`linear-gradient(135deg,${C.gold}22,${C.card})`,borderColor:C.gold+"44",textAlign:"center",marginBottom:12}}>
+          <div style={{fontSize:24,marginBottom:6}}>🌟</div>
+          <div style={{fontWeight:800,fontSize:15,color:C.gold,marginBottom:4}}>{summary.signupPrompt}</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>Track your progress, practice real past questions, and level up with AI tutoring — all free.</div>
+          <button onClick={()=>window.location.href="/"} style={{width:"100%",background:C.gold,border:"none",borderRadius:14,padding:"14px 0",color:"#000",fontWeight:900,fontSize:15,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
+            🚀 Create Free Account
+          </button>
+          <div style={{fontSize:11,color:C.sub}}>Joins 1,000+ students preparing for WAEC · NECO · JAMB</div>
+        </Card>
+      </div>
+    );
+  }
+
+  return null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY — catches crashes so the whole app doesn't go blank
@@ -3014,6 +4346,9 @@ export default function App() {
   const [tab,setTab]         = useState("ask");
   const [isOnline,setIsOnline]= useState(navigator.onLine);
   const [user,setUser]       = useState(()=>getUser());
+
+  // Check if this is a challenge URL — /challenge/XXXXXX
+  const challengeIdFromUrl = getChallengeIdFromUrl();
   const [showProfile,setShowProfile]= useState(false);
   const [xpEvents,setXpEvents]     = useState([]);
   const [showLevelUp,setShowLevelUp]= useState(null);
@@ -3095,9 +4430,32 @@ export default function App() {
 
   const handleAuth = (userData, newlyEarned=[]) => {
     setUser(userData);
-    setShowAuth(false);
     if(newlyEarned.length) setXpEvents(newlyEarned.map(a=>({type:"achievement",...a})));
     setXpEvents(prev=>[{type:"xp",xp:25,reason:"Welcome bonus!"},...prev]);
+    // Pre-cache questions for offline use on login
+    preCacheQuestionsForOffline(userData);
+  };
+
+  // Pre-cache the student's subjects × top exam types so questions work offline
+  const preCacheQuestionsForOffline = async (userData) => {
+    const subjects = userData?.subjects?.length > 0
+      ? userData.subjects
+      : ["Mathematics","English Language","Physics","Chemistry","Biology"];
+    const exams = [userData?.exam || "WAEC"];
+    // Fire-and-forget — cache in background without blocking UI
+    setTimeout(async () => {
+      for (const subject of subjects.slice(0,5)) {
+        for (const exam of exams) {
+          try {
+            await fetchQuestions(subject, exam, null, 40);
+            console.log(`📦 Cached offline: ${subject} ${exam}`);
+          } catch(e) { /* silently ignore — user may be offline */ }
+          // Small delay to avoid hammering the API
+          await new Promise(r => setTimeout(r, 800));
+        }
+      }
+      console.log("✅ Offline question cache ready");
+    }, 2000); // Wait 2s after login before caching
   };
 
   const handleLogout = () => {
@@ -3112,14 +4470,29 @@ export default function App() {
   };
 
   const navDueCount = getDueReviews().length;
+
+  // Navigate from home screen cards
+  const handleHomeNav = (dest) => {
+    if(dest==="practice") setTab("practice");
+    else if(dest==="learn") setTab("learn");
+    else if(dest==="career") setTab("me");
+    else if(dest==="snap") setTab("ask");
+    else if(dest==="study") setTab("learn");
+    else setTab(dest);
+  };
+
+  // 4-tab navigation — clean, focused, no overload
   const TABS=[
-    {id:"ask",   icon:"💬", label:"Ask AI"  },
-    {id:"snap",  icon:"📸", label:"Snap"    },
-    {id:"cbt",   icon:"🖥️", label:"JAMB CBT"},
-    {id:"quiz",  icon:"📝", label:"Quiz"    },
-    {id:"essay", icon:"✍️",  label:"Essay"   },
-    {id:"study", icon:"📚", label:"Study", badge:navDueCount},
+    {id:"home",     icon:"🏠", label:"Home"    },
+    {id:"ask",      icon:"💬", label:"Ask AI"  },
+    {id:"practice", icon:"📝", label:"Practice"},
+    {id:"learn",    icon:"🎓", label:"Learn",  badge:navDueCount},
+    {id:"career",   icon:"🗺️", label:"Career"  },
+    {id:"me",       icon:"👤", label:"Me"      },
   ];
+
+  // If visiting a challenge link, show guest play screen (no login needed)
+  if(challengeIdFromUrl) return <ChallengePlay challengeId={challengeIdFromUrl}/>;
 
   // Always show login screen if not logged in
   if(!user) return <AuthScreen onAuth={handleAuth}/>;
@@ -3181,12 +4554,12 @@ export default function App() {
 
       {/* Tab content */}
       <div style={{padding:"14px 13px 0",animation:"fadeUp .3s ease"}}>
-        {tab==="ask"   &&<AskAI/>}
-        {tab==="snap"  &&<SnapSolve/>}
-        {tab==="cbt"   &&<JambCBT onSaveHistory={handleSaveHistory}/>}
-        {tab==="quiz"  &&<Quiz onSaveHistory={handleSaveHistory}/>}
-        {tab==="essay" &&<EssayMarker/>}
-        {tab==="study" &&<StudyTools/>}
+        {tab==="home"     &&<HomeScreen user={user} onNavigate={handleHomeNav}/>}
+        {tab==="ask"      &&<AskAI/>}
+        {tab==="practice" &&<PracticeHub onSaveHistory={handleSaveHistory}/>}
+        {tab==="learn"    &&<LearnHub user={user}/>}
+        {tab==="career"   &&<CareerCounsellor/>}
+        {tab==="me"       &&<MeTab user={user} onUpdate={handleProfileUpdate} onLogout={handleLogout}/>}
       </div>
 
       {/* Bottom nav */}
