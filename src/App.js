@@ -321,7 +321,7 @@ const updateStreak = () => {
 // NIGERIA CURRICULUM DATA
 // ═══════════════════════════════════════════════════════════════════════════
 const EXAMS    = ["WAEC","NECO","JAMB"];
-const YEARS    = ["2025","2024","2023","2022","2021","2020","2019","2018","2017","2016","2015","2014","2013","2012","2010","2008","2005","2003","2000"];
+const YEARS    = ["2024","2023","2022","2021","2020","2019","2018","2017","2016","2015","2014","2013","2012","2010","2008","2005","2003","2000"];
 const SUBJECTS = [
   "Mathematics","English Language","Physics","Chemistry","Biology",
   "Economics","Government","Literature in English","Accounting","Commerce",
@@ -330,9 +330,9 @@ const SUBJECTS = [
 ];
 
 const EXAM_DATES = {
-  "WAEC 2025":  new Date("2026-05-05"),
-  "NECO 2025":  new Date("2026-06-16"),
-  "JAMB 2025":  new Date("2026-04-16"),
+  "WAEC 2025":  new Date("2025-05-05"),
+  "NECO 2025":  new Date("2025-06-16"),
+  "JAMB 2025":  new Date("2025-04-26"),
 };
 
 // Nigeria-specific topic maps for each subject
@@ -1614,6 +1614,17 @@ Keep it warm and Nigeria-context aware.`);
                 <div style={{fontSize:13,color:C.textLight,lineHeight:1.7}}>{q.explanation}</div>
               </Card>
               {q.tip&&<Card style={{background:C.gold+"11",borderColor:C.gold+"44"}}><div style={{fontSize:11,fontWeight:800,color:C.gold,marginBottom:4}}>🎯 {exam} EXAMINER TIP</div><div style={{fontSize:12,color:C.textLight,lineHeight:1.6}}>{q.tip}</div></Card>}
+              {/* Show Me How button — sends to AskAI with full working request */}
+              {sel!==q.answer&&(
+                <button onClick={()=>{
+                  const prompt="Show me how to solve this "+exam+" "+subject+" question step by step:\n\n"+q.q+"\n\nOptions: A) "+(q.options?.A||"")+" B) "+(q.options?.B||"")+" C) "+(q.options?.C||"")+" D) "+(q.options?.D||"")+"\n\nCorrect answer: "+q.answer;
+                  // Store in sessionStorage so AskAI tab can pick it up
+                  sessionStorage.setItem("examace_show_me", prompt);
+                  alert("Switch to the Ask AI tab — your question is ready to send! 💡");
+                }} style={{width:"100%",background:C.purple+"22",border:`1px solid ${C.purple}44`,borderRadius:12,padding:"11px 0",color:C.purple,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
+                  🎓 Show Me How To Solve This
+                </button>
+              )}
               <Btn onClick={next} color={C.blue} tc="#fff">{cur+1>=qs.length?"🏁 See Results →":"Next Question →"}</Btn>
             </div>
           )}
@@ -1677,6 +1688,18 @@ Keep it warm and Nigeria-context aware.`);
 // ASK AI — Chat with 4-tier AI
 // ═══════════════════════════════════════════════════════════════════════════
 function AskAI() {
+  // Pick up "Show Me How" prompt from Quiz tab via sessionStorage
+  useEffect(()=>{
+    const pending = sessionStorage.getItem("examace_show_me");
+    if(pending){
+      sessionStorage.removeItem("examace_show_me");
+      // Auto-send after a short delay so the component is fully mounted
+      setTimeout(()=>{
+        setInput(pending);
+      }, 400);
+    }
+  },[]);
+
   const [msgs,setMsgs]=useState([{from:"bot",text:`👋 **Welcome to ExamAce AI!** 🏆🇳🇬\n\nI'm your personal WAEC/NECO/JAMB tutor. Ask me anything!\n\n📸 **Snap a question** → I solve it with full working\n📅 **Ask by year** → "WAEC 2022 Physics Q4"\n📚 **Any topic** → step-by-step explanation\n💡 **Study tips** → "How do I pass JAMB Chemistry?"\n\nType below or tap 📷 to snap a photo!`,time:ts()}]);
   const [input,setInput]=useState("");
   const [exam,setExam]=useState("WAEC");
@@ -1750,9 +1773,12 @@ ${NG_CONTEXT}`,
   };
 
   const QUICK_ASKS = [
-    "WAEC 2023 Maths past question","JAMB 2022 Chemistry",
-    "Explain osmosis for NECO","How to pass JAMB in one sitting?",
-    "WAEC 2024 English essay tips","Differentiate between acids and bases"
+    "Show me how to solve quadratic equations step by step",
+    "WAEC 2023 Maths past question",
+    "JAMB 2022 Chemistry",
+    "Explain osmosis for NECO",
+    "How to pass JAMB in one sitting?",
+    "Show me how to balance chemical equations",
   ];
 
   return (
@@ -2989,7 +3015,6 @@ export default function App() {
   const [isOnline,setIsOnline]= useState(navigator.onLine);
   const [user,setUser]       = useState(()=>getUser());
   const [showProfile,setShowProfile]= useState(false);
-  const [showAuth,setShowAuth]      = useState(false);
   const [xpEvents,setXpEvents]     = useState([]);
   const [showLevelUp,setShowLevelUp]= useState(null);
 
@@ -3008,23 +3033,64 @@ export default function App() {
   // Save a quiz/CBT result to the server and award XP
   const handleSaveHistory = useCallback(async (entry) => {
     saveHistory(entry); // always save locally too
-    if(!getToken()) return; // not logged in — local only
+    if(!getToken()) return;
     try {
-      const data = await apiCall("/api/progress/save","POST",entry);
-      // Update local user with new XP/level
-      const updated = {...(getUser()||{}), xp:data.xp, level:data.level,
-        currentStreak:data.currentStreak, longestStreak:data.longestStreak,
-        achievements:[...(getUser()?.achievements||[]), ...(data.newlyEarned||[]).map(a=>a.id)],
+      const data = await apiCall("/api/progress/save", "POST", entry);
+      if(!data || data.error) { console.warn("Save returned error:", data?.error); return; }
+
+      // Merge new server stats back into local user object
+      const currentUser = getUser() || {};
+      const updated = {
+        ...currentUser,
+        xp:             data.xp            ?? currentUser.xp,
+        level:          data.level         ?? currentUser.level,
+        currentStreak:  data.currentStreak ?? currentUser.currentStreak,
+        longestStreak:  data.longestStreak ?? currentUser.longestStreak,
+        achievements: [
+          ...new Set([
+            ...(currentUser.achievements || []),
+            ...(data.newlyEarned || []).map(a => a.id),
+          ])
+        ],
+        // Update stats directly so profile shows immediately without re-fetch
+        stats: {
+          ...(currentUser.stats || {}),
+          quizzesCompleted: entry.type === "quiz"
+            ? (currentUser.stats?.quizzesCompleted || 0) + 1
+            : currentUser.stats?.quizzesCompleted || 0,
+          cbtCompleted: entry.type === "cbt"
+            ? (currentUser.stats?.cbtCompleted || 0) + 1
+            : currentUser.stats?.cbtCompleted || 0,
+          totalAnswered: (currentUser.stats?.totalAnswered || 0) + (entry.total || 0),
+          totalCorrect:  (currentUser.stats?.totalCorrect  || 0) + Math.round(((entry.pct||0)/100) * (entry.total||0)),
+          bestJAMB: Math.max(currentUser.stats?.bestJAMB || 0, entry.jambScore || 0),
+          subjectsPracticed: entry.subject ? {
+            ...(currentUser.stats?.subjectsPracticed || {}),
+            [entry.subject]: (currentUser.stats?.subjectsPracticed?.[entry.subject] || 0) + 1,
+          } : (currentUser.stats?.subjectsPracticed || {}),
+          longestStreak: Math.max(currentUser.stats?.longestStreak || 0, data.longestStreak || 0),
+        },
       };
+
       saveAuth(getToken(), updated);
       setUser(updated);
-      // Show XP toast events
+
+      // XP toast + level-up celebration
       const events = [];
+      const xpEarned = (data.xp || 0) - (currentUser.xp || 0);
+      if(xpEarned > 0) events.push({
+        type: "xp",
+        xp:   xpEarned,
+        reason: entry.type === "cbt" ? "JAMB CBT completed" : `Quiz: ${entry.subject || ""}`,
+      });
+      if(data.newlyEarned?.length) data.newlyEarned.forEach(a => events.push({type:"achievement", ...a}));
       if(data.levelUp) setShowLevelUp(data.level);
-      events.push({type:"xp", xp:entry.type==="cbt"?60:20, reason:entry.type==="cbt"?"CBT completed":"Quiz completed"});
-      if(data.newlyEarned?.length) data.newlyEarned.forEach(a=>events.push({type:"achievement",...a}));
       if(events.length) setXpEvents(events);
-    } catch(e) { console.warn("Could not save to server:", e.message); }
+
+      console.log(`✅ Progress saved — XP: ${data.xp}, Level: ${data.level?.name}, Streak: ${data.currentStreak}`);
+    } catch(e) {
+      console.warn("Could not save progress to server:", e.message);
+    }
   },[]);
 
   const handleAuth = (userData, newlyEarned=[]) => {
@@ -3036,7 +3102,7 @@ export default function App() {
 
   const handleLogout = () => {
     clearAuth();
-    setUser(null);
+    setUser(null);        // triggers !user → AuthScreen shown immediately
     setShowProfile(false);
   };
 
@@ -3055,9 +3121,10 @@ export default function App() {
     {id:"study", icon:"📚", label:"Study", badge:navDueCount},
   ];
 
-  // Show auth screen when user explicitly opens it (not blocking)
-  if(showAuth && !user) return <AuthScreen onAuth={handleAuth}/>;
-  if(showProfile && user) return <ProfileScreen user={user} onClose={()=>setShowProfile(false)} onLogout={handleLogout} onUpdate={handleProfileUpdate}/>;
+  // Always show login screen if not logged in
+  if(!user) return <AuthScreen onAuth={handleAuth}/>;
+  // Show profile screen when requested
+  if(showProfile) return <ProfileScreen user={user} onClose={()=>setShowProfile(false)} onLogout={handleLogout} onUpdate={handleProfileUpdate}/>;
 
   return (
     <ErrorBoundary>
@@ -3097,15 +3164,9 @@ export default function App() {
             )}
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            {user?(
-              <button onClick={()=>setShowProfile(true)} style={{background:C.gold+"22",border:`1px solid ${C.gold}44`,color:C.gold,borderRadius:20,padding:"5px 12px",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
-                👤 {user.name?.split(" ")[0]||"Profile"}
-              </button>
-            ):(
-              <button onClick={()=>setShowAuth(true)} style={{background:C.gold,border:"none",color:"#000",borderRadius:20,padding:"6px 14px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
-                Sign In 🚀
-              </button>
-            )}
+            <button onClick={()=>setShowProfile(true)} style={{background:C.gold+"22",border:`1px solid ${C.gold}44`,color:C.gold,borderRadius:20,padding:"5px 12px",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+              👤 {user.name?.split(" ")[0]||"Profile"}
+            </button>
           </div>
         </div>
       </div>
