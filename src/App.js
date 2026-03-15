@@ -21,8 +21,74 @@ const C = {
 // BACKEND API — 4-TIER ROUTER
 // All AI calls go through the backend which handles: Gemini → DeepSeek → Groq → Claude
 // ═══════════════════════════════════════════════════════════════════════════
-// Auto-detect backend: same origin in production (Render), localhost in dev
+// Backend URL — points to your Render backend service
+// Frontend and backend are on separate Render services
 const BACKEND = "https://examace-backend.onrender.com";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROFILE & AUTH API
+// ═══════════════════════════════════════════════════════════════════════════
+const AUTH_KEY = "examace_token_v1";
+const USER_KEY = "examace_user_v1";
+
+const getToken   = () => { try { return localStorage.getItem(AUTH_KEY)||null; } catch { return null; } };
+const getUser    = () => { try { const r=localStorage.getItem(USER_KEY); return r?JSON.parse(r):null; } catch { return null; } };
+const saveAuth   = (token,user) => { try { localStorage.setItem(AUTH_KEY,token); localStorage.setItem(USER_KEY,JSON.stringify(user)); } catch {} };
+const clearAuth  = () => { try { localStorage.removeItem(AUTH_KEY); localStorage.removeItem(USER_KEY); } catch {} };
+
+const apiCall = async (path, method="GET", body=null) => {
+  const token = getToken();
+  const opts = { method, headers:{ "Content-Type":"application/json", ...(token?{"Authorization":`Bearer ${token}`}:{}) } };
+  if(body) opts.body = JSON.stringify(body);
+  const res = await fetch(`${BACKEND}${path}`, opts);
+  const data = await res.json();
+  if(!res.ok) throw new Error(data.error || `API error ${res.status}`);
+  return data;
+};
+
+const NIGERIA_STATES = [
+  "Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno",
+  "Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","FCT Abuja","Gombe",
+  "Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos",
+  "Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto",
+  "Taraba","Yobe","Zamfara"
+];
+
+// Gamification helpers (mirror server constants)
+const LEVELS_CLIENT = [
+  {level:1,name:"JSS3 Student",  minXP:0,   badge:"🌱",color:"#22c55e"},
+  {level:2,name:"SS1 Learner",   minXP:100, badge:"📚",color:"#38bdf8"},
+  {level:3,name:"SS2 Scholar",   minXP:300, badge:"⭐",color:"#a855f7"},
+  {level:4,name:"SS3 Candidate", minXP:600, badge:"🎯",color:"#f97316"},
+  {level:5,name:"WAEC Ready",    minXP:1000,badge:"🏅",color:"#f5c842"},
+  {level:6,name:"JAMB Champion", minXP:1500,badge:"🏆",color:"#f5c842"},
+  {level:7,name:"A1 Legend",     minXP:2500,badge:"👑",color:"#ef4444"},
+  {level:8,name:"ExamAce Master",minXP:4000,badge:"💎",color:"#a855f7"},
+];
+const getLevelClient = (xp=0) => {
+  const lvl  = [...LEVELS_CLIENT].reverse().find(l=>xp>=l.minXP)||LEVELS_CLIENT[0];
+  const next = LEVELS_CLIENT.find(l=>l.minXP>xp);
+  return {...lvl, nextXP:next?.minXP||null, xpToNext:next?next.minXP-xp:0,
+    progress:next?Math.round(((xp-lvl.minXP)/(next.minXP-lvl.minXP))*100):100};
+};
+
+const ACHIEVEMENTS_CLIENT = [
+  {id:"first_quiz",  name:"First Step",     desc:"Complete your first quiz",              icon:"🎯"},
+  {id:"streak_3",    name:"Hat Trick",       desc:"3-day study streak",                    icon:"🔥"},
+  {id:"streak_7",    name:"Week Warrior",    desc:"7-day study streak",                    icon:"⚡"},
+  {id:"streak_30",   name:"Iron Student",    desc:"30-day study streak",                   icon:"💪"},
+  {id:"perfect_quiz",name:"Perfectionist",   desc:"Score 100% on any quiz",               icon:"💯"},
+  {id:"cbt_first",   name:"CBT Debut",       desc:"Complete your first JAMB CBT mock",    icon:"🖥️"},
+  {id:"cbt_280",     name:"Uni Ready",       desc:"Score 280+ in JAMB CBT",               icon:"🎓"},
+  {id:"cbt_300",     name:"Admission Ready", desc:"Score 300+ in JAMB CBT",               icon:"🏛️"},
+  {id:"q100",        name:"Century Mark",    desc:"Answer 100 questions total",            icon:"💯"},
+  {id:"q500",        name:"Question Master", desc:"Answer 500 questions total",            icon:"🌟"},
+  {id:"q1000",       name:"Question Legend", desc:"Answer 1,000 questions total",          icon:"🔱"},
+  {id:"subjects_5",  name:"All-Rounder",     desc:"Practice 5 different subjects",         icon:"📚"},
+  {id:"waec_a1",     name:"A1 Achiever",     desc:"Score 75%+ on any WAEC quiz",          icon:"🏆"},
+  {id:"review_10",   name:"Disciplined",     desc:"Complete 10 spaced repetition reviews", icon:"🔁"},
+  {id:"review_50",   name:"Memory Master",   desc:"Complete 50 spaced repetition reviews", icon:"🧠"},
+];
 
 const callAI = async (messages, system, imgData) => {
   const body = { messages, system, imgData };
@@ -80,6 +146,141 @@ const fetchQuestionsBatch = async (subjects) => {
   }
 };
 
+// ── STREAMING AI CALL — shows answer word-by-word ────────────────────────────
+const callAIStream = async (messages, system, onToken, onDone) => {
+  try {
+    const res = await fetch(`${BACKEND}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, system }),
+    });
+    if (!res.ok) throw new Error(`Stream error: ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let source = "AI";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === "token") { source = data.source || source; onToken(data.text, source); }
+            if (data.type === "done")  { onDone(source); return; }
+            if (data.type === "error") { onDone(source); return; }
+          } catch {}
+        }
+      }
+    }
+    onDone(source);
+  } catch(e) {
+    // Fallback to non-streaming if stream fails
+    console.warn("Stream failed, using regular callAI:", e.message);
+    const { text, source } = await callAI(messages, system);
+    onToken(text, source);
+    onDone(source);
+  }
+};
+
+// ── REPORT QUESTION (flag bad ALOC question) ──────────────────────────────────
+const reportQuestion = async (questionId, subject, type=1, message="") => {
+  if (!questionId) return;
+  try {
+    await fetch(`${BACKEND}/api/report-question`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ questionId, subject, type, message }),
+    });
+    console.log(`🚩 Reported question ${questionId}`);
+  } catch(e) { console.warn("Report failed:", e.message); }
+};
+
+// ── SPACED REPETITION STORE ───────────────────────────────────────────────────
+// Wrong questions are scheduled for review: 1 day → 3 days → 7 days → 14 days
+const SRS_KEY = "examace_srs_v1";
+const SRS_INTERVALS = [1, 3, 7, 14]; // days
+
+const getSRS = () => {
+  try { const r = localStorage.getItem(SRS_KEY); return r ? JSON.parse(r) : {}; } catch { return {}; }
+};
+const saveSRS = (data) => {
+  try { localStorage.setItem(SRS_KEY, JSON.stringify(data)); } catch {}
+};
+const scheduleReview = (question, subject, exam) => {
+  try {
+    const srs = getSRS();
+    const id = question.id || `${question.q.slice(0,40)}`;
+    const existing = srs[id];
+    const interval = existing ? SRS_INTERVALS[Math.min(existing.level||0, SRS_INTERVALS.length-1)] : SRS_INTERVALS[0];
+    const nextReview = Date.now() + interval * 24 * 60 * 60 * 1000;
+    srs[id] = { question, subject, exam, level: existing ? Math.min((existing.level||0)+1, SRS_INTERVALS.length-1) : 0, nextReview, scheduled: new Date().toISOString() };
+    saveSRS(srs);
+  } catch {}
+};
+const getDueReviews = () => {
+  try {
+    const srs = getSRS();
+    const now = Date.now();
+    return Object.values(srs).filter(r => r.nextReview <= now);
+  } catch { return []; }
+};
+const clearReviewItem = (question) => {
+  try {
+    const srs = getSRS();
+    const id = question.id || `${question.q.slice(0,40)}`;
+    delete srs[id];
+    saveSRS(srs);
+  } catch {}
+};
+
+// ── WEAKNESS TRACKER ──────────────────────────────────────────────────────────
+const WEAKNESS_KEY = "examace_weakness_v1";
+const updateTopicStats = (topic, subject, correct) => {
+  try {
+    const data = JSON.parse(localStorage.getItem(WEAKNESS_KEY)||"{}");
+    const key = `${subject}||${topic}`;
+    if (!data[key]) data[key] = { topic, subject, correct:0, total:0 };
+    data[key].total++;
+    if (correct) data[key].correct++;
+    data[key].pct = Math.round((data[key].correct / data[key].total) * 100);
+    localStorage.setItem(WEAKNESS_KEY, JSON.stringify(data));
+  } catch {}
+};
+const getWeakTopics = (threshold=50) => {
+  try {
+    const data = JSON.parse(localStorage.getItem(WEAKNESS_KEY)||"{}");
+    return Object.values(data)
+      .filter(t => t.total >= 3 && t.pct < threshold)
+      .sort((a,b) => a.pct - b.pct)
+      .slice(0, 10);
+  } catch { return []; }
+};
+
+// ── CBT AUTO-SAVE ─────────────────────────────────────────────────────────────
+const CBT_SAVE_KEY = "examace_cbt_save_v1";
+const saveCBTProgress = (subjects, allQs, answers, flagged, timeLeft) => {
+  try {
+    localStorage.setItem(CBT_SAVE_KEY, JSON.stringify({ subjects, allQs, answers, timeLeft, savedAt: Date.now() }));
+  } catch {}
+};
+const loadCBTSave = () => {
+  try {
+    const r = localStorage.getItem(CBT_SAVE_KEY);
+    if (!r) return null;
+    const data = JSON.parse(r);
+    // Only restore if saved within the last 3 hours
+    if (Date.now() - data.savedAt > 3 * 60 * 60 * 1000) { localStorage.removeItem(CBT_SAVE_KEY); return null; }
+    return data;
+  } catch { return null; }
+};
+const clearCBTSave = () => { try { localStorage.removeItem(CBT_SAVE_KEY); } catch {} };
+
 // Source badge colours
 const SOURCE_BADGE = {
   ALOC:    { bg:"#22c55e18", border:"#22c55e33", color:"#22c55e", label:"✅ Real Past Question (ALOC)" },
@@ -116,6 +317,7 @@ const updateStreak = () => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // NIGERIA CURRICULUM DATA
 // ═══════════════════════════════════════════════════════════════════════════
 const EXAMS    = ["WAEC","NECO","JAMB"];
@@ -130,7 +332,7 @@ const SUBJECTS = [
 const EXAM_DATES = {
   "WAEC 2025":  new Date("2026-05-05"),
   "NECO 2025":  new Date("2026-06-16"),
-  "JAMB 2025":  new Date("2026-04-26"),
+  "JAMB 2025":  new Date("2026-04-16"),
 };
 
 // Nigeria-specific topic maps for each subject
@@ -419,6 +621,280 @@ const RadialProgress = ({ pct, color, size=80, label }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PROFILE SETUP — shown to new users on first open
+// ═══════════════════════════════════════════════════════════════════════════
+function ProfileSetup({ onComplete }) {
+  const [step,setStep]=useState(0);
+  const [name,setName]=useState("");
+  const [avatar,setAvatar]=useState("🎓");
+  const [exam,setExam]=useState("JAMB");
+  const [examYear,setExamYear]=useState("2025");
+  const [school,setSchool]=useState("");
+  const [subjects,setSubjects]=useState([]);
+
+  const EXAM_SUBJECTS = ["Mathematics","English Language","Physics","Chemistry","Biology","Economics","Government","Literature in English","Agricultural Science","Geography","Accounting","Commerce","Christian Religious Studies","Islamic Studies"];
+
+  const toggleSubject = (s) => setSubjects(prev=>prev.includes(s)?prev.filter(x=>x!==s):[...prev,s].slice(0,4));
+
+  const finish = () => {
+    const profile = { name:name.trim()||"Student", avatar, exam, examYear, school:school.trim(), subjects, createdAt:Date.now() };
+    saveProfile(profile);
+    // Give welcome XP
+    awardXP(100, "profile created");
+    onComplete(profile);
+  };
+
+  const steps = [
+    // Step 0: Name + avatar
+    <div key={0}>
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <div style={{fontSize:64,marginBottom:8}}>{avatar}</div>
+        <div style={{fontSize:18,fontWeight:900,color:C.textLight,marginBottom:4}}>Welcome to ExamAce AI! 🏆</div>
+        <div style={{fontSize:13,color:C.muted}}>Let's set up your student profile</div>
+      </div>
+      <Label>Your Name</Label>
+      <Inp value={name} onChange={setName} placeholder="e.g. Chidi Okonkwo"/>
+      <div style={{marginTop:16,marginBottom:8}}><Label>Choose Your Avatar</Label></div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:10,justifyContent:"center"}}>
+        {AVATARS.map(a=>(
+          <button key={a} onClick={()=>setAvatar(a)} style={{width:52,height:52,fontSize:28,background:avatar===a?C.gold+"22":C.card2,border:`2px solid ${avatar===a?C.gold:C.border}`,borderRadius:14,cursor:"pointer"}}>
+            {a}
+          </button>
+        ))}
+      </div>
+      <div style={{marginTop:20}}>
+        <Btn onClick={()=>setStep(1)} color={C.gold} disabled={!name.trim()}>Next →</Btn>
+      </div>
+    </div>,
+
+    // Step 1: Exam details
+    <div key={1}>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <div style={{fontSize:42,marginBottom:8}}>{avatar}</div>
+        <div style={{fontSize:16,fontWeight:800,color:C.gold}}>Hi {name}! 👋</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:4}}>Tell us about your exam</div>
+      </div>
+      <Label>Target Exam</Label>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+        {["JAMB","WAEC","NECO"].map(e=>(
+          <button key={e} onClick={()=>setExam(e)} style={{padding:"12px 0",background:exam===e?C.purple+"22":C.card2,border:`2px solid ${exam===e?C.purple:C.border}`,borderRadius:12,color:exam===e?C.purple:C.muted,fontWeight:exam===e?800:400,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{e}</button>
+        ))}
+      </div>
+      <Label>Exam Year</Label>
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+        {["2025","2026"].map(y=>(
+          <button key={y} onClick={()=>setExamYear(y)} style={{flex:1,padding:"11px 0",background:examYear===y?C.purple+"22":C.card2,border:`2px solid ${examYear===y?C.purple:C.border}`,borderRadius:12,color:examYear===y?C.purple:C.muted,fontWeight:examYear===y?800:400,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{y}</button>
+        ))}
+      </div>
+      <Label>Target School (optional)</Label>
+      <Inp value={school} onChange={setSchool} placeholder="e.g. University of Lagos"/>
+      <div style={{display:"flex",gap:8,marginTop:20}}>
+        <button onClick={()=>setStep(0)} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 0",color:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+        <button onClick={()=>setStep(2)} style={{flex:2,background:C.purple,border:"none",borderRadius:12,padding:"13px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Next →</button>
+      </div>
+    </div>,
+
+    // Step 2: Subjects
+    <div key={2}>
+      <div style={{textAlign:"center",marginBottom:20}}>
+        <div style={{fontSize:42,marginBottom:8}}>{avatar}</div>
+        <div style={{fontSize:16,fontWeight:800,color:C.gold}}>Your Subjects</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:4}}>Select up to 4 subjects you're preparing for</div>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:20}}>
+        {EXAM_SUBJECTS.map(s=>(
+          <button key={s} onClick={()=>toggleSubject(s)} style={{padding:"8px 14px",background:subjects.includes(s)?C.green+"22":C.card2,border:`1.5px solid ${subjects.includes(s)?C.green:C.border}`,borderRadius:20,color:subjects.includes(s)?C.green:C.muted,fontWeight:subjects.includes(s)?700:400,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{s}</button>
+        ))}
+      </div>
+      <div style={{background:C.gold+"18",borderRadius:10,padding:"10px 14px",marginBottom:16,fontSize:12,color:C.gold}}>
+        🎁 Complete setup to earn <b>100 XP</b> welcome bonus!
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={()=>setStep(1)} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 0",color:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+        <button onClick={finish} style={{flex:2,background:C.gold,border:"none",borderRadius:12,padding:"13px 0",color:"#000",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🚀 Start Learning!</button>
+      </div>
+    </div>
+  ];
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:24,padding:24,width:"100%",maxWidth:440,maxHeight:"90vh",overflowY:"auto"}}>
+        {/* Progress dots */}
+        <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:20}}>
+          {[0,1,2].map(i=><div key={i} style={{width:8,height:8,borderRadius:"50%",background:i<=step?C.gold:C.border,transition:"background .3s"}}/>)}
+        </div>
+        {steps[step]}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROFILE DASHBOARD — full student profile page
+// ═══════════════════════════════════════════════════════════════════════════
+function ProfileDashboard({ profile, onClose, onEdit }) {
+  const xpData    = getXPData();
+  const history   = getHistory();
+  const streak    = getStreak();
+  const lvlIdx    = getLevelFromXP(xpData.xp);
+  const lvl       = LEVELS[lvlIdx];
+  const nextLvl   = LEVELS[lvlIdx+1];
+  const progress  = getLevelProgress(xpData.xp);
+  const quizzes   = history.filter(h=>h.type==="quiz");
+  const cbts      = history.filter(h=>h.type==="cbt");
+  const avgScore  = quizzes.length>0?Math.round(quizzes.reduce((s,h)=>s+h.pct,0)/quizzes.length):0;
+  const bestCBT   = cbts.length>0?Math.max(...cbts.map(h=>h.jambScore)):0;
+  const daysStudied = history.length>0?new Set(history.map(h=>new Date(h.timestamp).toDateString())).size:0;
+
+  // Subjects practiced
+  const subjectSet = [...new Set(quizzes.map(h=>h.subject))];
+
+  // Earned badges
+  const earnedBadges = BADGES_DEF.filter(b=>xpData.badges?.includes(b.id));
+  const lockedBadges = BADGES_DEF.filter(b=>!xpData.badges?.includes(b.id));
+
+  return(
+    <div style={{position:"fixed",inset:0,background:C.bg,zIndex:200,overflowY:"auto",paddingBottom:40}}>
+      {/* Header */}
+      <div style={{background:`linear-gradient(135deg,#0a0c14,#12141e)`,borderBottom:`1px solid ${C.border}`,padding:"13px 16px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:10}}>
+        <button onClick={onClose} style={{background:C.card2,border:`1px solid ${C.border}`,color:C.muted,borderRadius:10,padding:"7px 14px",cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>← Back</button>
+        <div style={{flex:1,fontWeight:900,fontSize:17,color:C.textLight}}>My Profile</div>
+        <button onClick={onEdit} style={{background:C.card2,border:`1px solid ${C.border}`,color:C.muted,borderRadius:10,padding:"7px 12px",cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700}}>✏️ Edit</button>
+      </div>
+
+      <div style={{padding:"16px 14px 0"}}>
+
+        {/* Hero card */}
+        <div style={{background:`linear-gradient(135deg,${lvl.color}22,${C.card})`,border:`1px solid ${lvl.color}44`,borderRadius:20,padding:20,marginBottom:14,textAlign:"center"}}>
+          <div style={{fontSize:64,marginBottom:8}}>{profile.avatar||"🎓"}</div>
+          <div style={{fontWeight:900,fontSize:22,color:C.textLight,marginBottom:2}}>{profile.name}</div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:10}}>{profile.exam} {profile.examYear}{profile.school?" · "+profile.school:""}</div>
+          {/* Level badge */}
+          <div style={{display:"inline-flex",alignItems:"center",gap:8,background:lvl.color+"22",border:`1px solid ${lvl.color}44`,borderRadius:20,padding:"6px 16px",marginBottom:12}}>
+            <span style={{fontSize:18}}>{lvl.icon}</span>
+            <span style={{fontWeight:800,color:lvl.color,fontSize:13}}>{lvl.name}</span>
+          </div>
+          {/* XP bar */}
+          <div style={{marginBottom:4}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:4}}>
+              <span>{xpData.xp} XP total</span>
+              <span>{nextLvl?`${progress.needed} XP to ${nextLvl.name}`:"Max Level!"}</span>
+            </div>
+            <div style={{background:C.border,borderRadius:8,height:10}}>
+              <div style={{background:lvl.color,height:"100%",borderRadius:8,width:progress.pct+"%",transition:"width 1s"}}/>
+            </div>
+          </div>
+          <div style={{fontSize:12,color:lvl.color,fontWeight:700,marginTop:4}}>{progress.pct}% to next level</div>
+        </div>
+
+        {/* Stats grid */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          {[
+            {icon:"🔥",label:"Current Streak",value:`${streak.count} days`,sub:`Best: ${streak.best||streak.count} days`,color:C.orange},
+            {icon:"⚡",label:"Total XP",value:xpData.xp.toLocaleString(),sub:`${xpData.weeklyXP||0} XP this week`,color:C.gold},
+            {icon:"📝",label:"Quizzes Done",value:quizzes.length,sub:`Avg: ${avgScore}%`,color:C.blue},
+            {icon:"🖥️",label:"CBT Mocks",value:cbts.length,sub:bestCBT>0?`Best: ${bestCBT}/400`:"No CBT yet",color:C.purple},
+            {icon:"📅",label:"Days Studied",value:daysStudied,sub:`${streak.freeze||0} streak freeze${streak.freeze!==1?"s":""} left`,color:C.green},
+            {icon:"🏅",label:"Badges",value:`${earnedBadges.length}/${BADGES_DEF.length}`,sub:"achievements",color:C.pink},
+          ].map(s=>(
+            <div key={s.label} style={{background:C.card,border:`1px solid ${s.color}22`,borderRadius:14,padding:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:20}}>{s.icon}</span>
+                <span style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>{s.label}</span>
+              </div>
+              <div style={{fontWeight:900,fontSize:22,color:s.color}}>{s.value}</div>
+              <div style={{fontSize:11,color:C.sub,marginTop:2}}>{s.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Subjects */}
+        {(profile.subjects?.length>0||subjectSet.length>0)&&(
+          <Card>
+            <Label>My Subjects</Label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {[...new Set([...(profile.subjects||[]),...subjectSet])].map(s=>(
+                <div key={s} style={{background:C.green+"18",border:`1px solid ${C.green}33`,borderRadius:20,padding:"5px 12px",fontSize:12,color:C.green,fontWeight:600}}>{s}</div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Streak calendar (last 30 days) */}
+        <Card>
+          <Label c={C.orange}>🔥 Study Streak</Label>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+            <div style={{textAlign:"center"}}><div style={{fontWeight:900,fontSize:28,color:C.orange}}>{streak.count}</div><div style={{fontSize:11,color:C.muted}}>current</div></div>
+            <div style={{textAlign:"center"}}><div style={{fontWeight:900,fontSize:28,color:C.gold}}>{streak.best||streak.count}</div><div style={{fontSize:11,color:C.muted}}>best ever</div></div>
+            <div style={{textAlign:"center"}}><div style={{fontWeight:900,fontSize:28,color:C.green}}>{daysStudied}</div><div style={{fontSize:11,color:C.muted}}>total days</div></div>
+          </div>
+          {/* Mini calendar dots */}
+          <div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Last 30 days</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+              {Array.from({length:30},(_,i)=>{
+                const day = new Date(Date.now()-(29-i)*86400000).toDateString();
+                const studied = history.some(h=>new Date(h.timestamp).toDateString()===day);
+                return <div key={i} style={{width:18,height:18,borderRadius:4,background:studied?C.orange:C.card2,border:`1px solid ${studied?C.orange+"66":C.border}`}}/>;
+              })}
+            </div>
+          </div>
+          {streak.freeze>0&&(
+            <div style={{marginTop:10,background:C.blue+"18",borderRadius:10,padding:"8px 12px",fontSize:12,color:C.sky}}>
+              🛡️ You have <b>{streak.freeze}</b> streak freeze{streak.freeze!==1?"s":""} available — your streak is protected!
+            </div>
+          )}
+        </Card>
+
+        {/* Badges */}
+        <Card>
+          <Label c={C.gold}>🏅 Achievements ({earnedBadges.length}/{BADGES_DEF.length})</Label>
+          {earnedBadges.length===0&&(
+            <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Complete quizzes and CBT mocks to earn badges!</div>
+          )}
+          {/* Earned */}
+          {earnedBadges.length>0&&(
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+              {earnedBadges.map(b=>(
+                <div key={b.id} style={{background:C.gold+"22",border:`1px solid ${C.gold}44`,borderRadius:12,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:22}}>{b.icon}</span>
+                  <div><div style={{fontSize:12,fontWeight:800,color:C.gold}}>{b.name}</div><div style={{fontSize:10,color:C.muted}}>{b.desc}</div></div>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Locked */}
+          <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:8,textTransform:"uppercase",letterSpacing:0.5}}>Locked ({lockedBadges.length})</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {lockedBadges.map(b=>(
+              <div key={b.id} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 10px",display:"flex",alignItems:"center",gap:6,opacity:0.6}}>
+                <span style={{fontSize:18,filter:"grayscale(1)"}}>{b.icon}</span>
+                <div><div style={{fontSize:11,fontWeight:700,color:C.sub}}>{b.name}</div><div style={{fontSize:10,color:C.sub}}>{b.desc}</div></div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {/* Share card */}
+        {(()=>{
+          const shareText="🏆 My ExamAce AI Profile!\n\n"+
+            (profile?.avatar||"🌱")+" "+(profile?.name||"Student")+" — Level "+(lvl?.icon||"")+" "+(lvl?.name||"")+"\n"+
+            "⚡ "+(xpData?.xp||0)+" XP · 🔥 "+(streak?.count||0)+" day streak\n"+
+            "📝 "+quizzes.length+" quizzes · 🏅 "+(earnedBadges?.length||0)+" badges"+
+            (bestCBT>0?"\n🖥️ Best CBT: "+bestCBT+"/400":"")+"\n\nStudying with ExamAce AI 🇳🇬";
+          return(
+            <a href={"https://wa.me/?text="+encodeURIComponent(shareText)} target="_blank" rel="noreferrer"
+              style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:C.wa,borderRadius:13,padding:"14px 0",color:"#fff",fontWeight:800,fontSize:14,textDecoration:"none",marginTop:4}}>
+              💬 Share My Profile on WhatsApp
+            </a>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HISTORY DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════
 function HistoryDashboard({ onClose }) {
@@ -501,6 +977,34 @@ function JambCBT({ onSaveHistory }) {
   // Keep refs in sync with state
   useEffect(()=>{ allQsRef.current   = allQs;   },[allQs]);
   useEffect(()=>{ answersRef.current = answers; },[answers]);
+
+  // Auto-save answers every 30 seconds during test
+  useEffect(()=>{
+    if(screen !== "test") return;
+    const interval = setInterval(()=>{
+      saveCBTProgress(subjects, allQs, answers, {}, timeLeft);
+    }, 30000);
+    return () => clearInterval(interval);
+  },[screen, answers, timeLeft]);
+
+  // On mount: check for saved CBT progress and offer restore
+  useEffect(()=>{
+    const saved = loadCBTSave();
+    if(saved && saved.subjects && Object.keys(saved.allQs||{}).length > 0){
+      const mins = Math.floor((Date.now()-saved.savedAt)/60000);
+      if(window.confirm(`Resume your previous CBT session from ${mins} minutes ago? (${Object.values(saved.answers||{}).reduce((s,a)=>s+Object.keys(a).length,0)} answers saved)`)){
+        setSubjects(saved.subjects);
+        allQsRef.current = saved.allQs;
+        setAllQs(saved.allQs);
+        setAnswers(saved.answers||{});
+        setTimeLeft(saved.timeLeft||7200);
+        setScreen("test");
+        clearCBTSave();
+      } else {
+        clearCBTSave();
+      }
+    }
+  },[]);
 
   const getQCount = s => s==="Use of English"?60:40;
   const totalQuestions = subjects.reduce((s,subj)=>s+getQCount(subj),0);
@@ -753,7 +1257,10 @@ function JambCBT({ onSaveHistory }) {
                     {q.topic&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>Topic: {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</div>}
                     <div style={{marginTop:3}}><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div>
                   </div>
-                  <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>{isFlagged?"🚩 Flagged":"🏳️ Flag"}</button>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{isFlagged?"🚩":"🏳️"}</button>
+                    {q.source==="ALOC"&&q.id&&<button onClick={()=>{if(window.confirm("Report this question as incorrect/unclear?"))reportQuestion(q.id,subjects[curSubj],1,"Reported by student");}} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",color:C.sub,fontSize:11,cursor:"pointer",fontFamily:"inherit"}} title="Report bad question">⚠️</button>}
+                  </div>
                 </div>
                 {/* Show comprehension passage if present */}
                 {q.passage&&(
@@ -953,6 +1460,10 @@ function Quiz({ onSaveHistory }) {
     const q=qs[cur],ok=l===q.answer;
     if(ok)setScore(s=>s+1);
     setLog(lg=>[...lg,{...q,sel:l,ok}]);
+    // Track topic performance for weakness detection
+    if(q.topic) updateTopicStats(q.topic, subject, ok);
+    // Schedule wrong answers for spaced repetition review
+    if(!ok) scheduleReview(q, subject, exam);
   };
 
   const next = () => {
@@ -961,14 +1472,17 @@ function Quiz({ onSaveHistory }) {
   };
 
   const finish = async () => {
-    const pct=Math.round((score/qs.length)*100);
+    const finalScore = score;
+    const pct=Math.round((finalScore/qs.length)*100);
     setMode("result");
-    onSaveHistory({type:"quiz",exam,subject,year:qtype==="year"?year:"Random",qtype,pct,score,total:qs.length});
+    onSaveHistory({type:"quiz",exam,subject,year:qtype==="year"?year:"Random",qtype,pct,score:finalScore,total:qs.length});
     const wrong=log.filter(r=>!r.ok);
+    // Schedule ALL wrong questions for spaced repetition (1-day interval first)
+    wrong.forEach(r => scheduleReview(r, subject, exam));
     if(wrong.length>0){
       setCoachLoading(true);
       try{
-        const {text}=await callAI(`Nigerian student scored ${score}/${qs.length} (${pct}%) in ${exam} ${subject}${qtype==="year"?" ("+year+" paper)":""}.
+        const {text}=await callAI(`Nigerian student scored ${finalScore}/${qs.length} (${pct}%) in ${exam} ${subject}${qtype==="year"?" ("+year+" paper)":""}.
 Missed topics: ${[...new Set(wrong.map(w=>w.topic))].filter(Boolean).join(", ")}.
 Write a 100-word WhatsApp-style coaching note:
 - Start with their grade using Nigerian grading (A1=75%+, B2=65%+, C4=55%+, etc.)
@@ -1122,6 +1636,7 @@ Keep it warm and Nigeria-context aware.`);
               </div>
             )}
             <div style={{marginTop:8,background:C.gold+"18",borderRadius:10,padding:"6px 12px",display:"inline-block",fontSize:11,color:C.gold,fontWeight:700}}>✅ Result saved to history!</div>
+            {(()=>{const wrong=log.filter(r=>!r.ok);return wrong.length>0?<div style={{marginTop:6,background:C.purple+"18",borderRadius:10,padding:"5px 12px",display:"inline-block",fontSize:11,color:C.purple,fontWeight:700}}>🔁 {wrong.length} wrong questions scheduled for review</div>:null;})()}
           </Card>
 
           {(coachLoading||coach)&&(
@@ -1184,13 +1699,13 @@ function AskAI() {
     const display=imgPreview?(msg?"📷 [Photo]\n"+msg:"📷 [Question photo]"):msg;
     setMsgs(m=>[...m,{from:"user",text:display,time:ts(),img:imgPreview}]);
     setInput("");setImgPreview(null);setLoading(true);
+
     try{
-      let text,source;
       if(imgData){
+        // Images can't stream — use regular callAI
         const r=await callAI(
           `You are an official ${exam} examiner for ${subject}${yr?" ("+yr+" style)":""}.
 Read ALL question(s) in this image carefully.
-
 **QUESTION READ:** [restate the question exactly]
 **SUBJECT & TOPIC:** [identify subject and syllabus topic]
 **COMPLETE SOLUTION:** [full step-by-step working using ${exam} marking scheme]
@@ -1200,14 +1715,34 @@ Read ALL question(s) in this image carefully.
 ${NG_CONTEXT}`,
           null, imgData
         );
-        text=r.text; source=r.source;
         setImgData(null);
-      }else{
+        setMsgs(m=>[...m,{from:"bot",text:r.text,time:ts(),source:r.source}]);
+      } else {
+        // Stream text responses token-by-token ✨
         const hist=msgs.slice(-8).map(m=>({role:m.from==="user"?"user":"assistant",content:m.text}));
-        const r=await callAI([...hist,{role:"user",content:msg}],SYS(exam,subject,yr));
-        text=r.text; source=r.source;
+        const msgHistory=[...hist,{role:"user",content:msg}];
+        const botId = Date.now();
+        // Add an empty bot message that we'll fill in
+        setMsgs(m=>[...m,{from:"bot",text:"",time:ts(),source:"",id:botId,streaming:true}]);
+        setLoading(false); // hide spinner — streaming indicator shows instead
+
+        let fullText = "";
+        let finalSource = "AI";
+        await callAIStream(
+          msgHistory,
+          SYS(exam,subject,yr),
+          (token, src) => {
+            fullText += token;
+            finalSource = src;
+            setMsgs(m => m.map(msg => msg.id===botId ? {...msg, text:fullText, source:src, streaming:true} : msg));
+          },
+          (src) => {
+            finalSource = src;
+            setMsgs(m => m.map(msg => msg.id===botId ? {...msg, source:src, streaming:false} : msg));
+          }
+        );
+        return; // don't call setLoading(false) again below
       }
-      setMsgs(m=>[...m,{from:"bot",text,time:ts(),source}]);
     }catch{
       setMsgs(m=>[...m,{from:"bot",text:"⚠️ Connection issue. Please try again!",time:ts()}]);
     }
@@ -1248,9 +1783,9 @@ ${NG_CONTEXT}`,
             <div key={i} style={{display:"flex",justifyContent:m.from==="user"?"flex-end":"flex-start",animation:i===msgs.length-1?"fadeUp .3s ease":"none"}}>
               <div style={{maxWidth:"85%",background:m.from==="user"?"#dcf8c6":"#ffffff",borderRadius:m.from==="user"?"14px 14px 2px 14px":"14px 14px 14px 2px",padding:"10px 13px",fontSize:13,boxShadow:"0 1px 2px rgba(0,0,0,0.1)"}}>
                 {m.img&&<img src={m.img} alt="" style={{maxWidth:"100%",borderRadius:8,marginBottom:8,maxHeight:140,objectFit:"cover"}}/>}
-                <div>{fmt(m.text,false)}</div>
-                {m.source&&<AiBadge source={m.source}/>}
-                <div style={{fontSize:10,color:"#64748b",textAlign:"right",marginTop:4}}>{m.time}{m.from==="user"&&<span style={{color:"#34B7F1"}}> ✓✓</span>}</div>
+                {m.img&&<img src={m.img} alt="" style={{maxWidth:"100%",borderRadius:8,marginBottom:8,maxHeight:140,objectFit:"cover"}}/>}
+                <div>{fmt(m.text||"",false)}{m.streaming&&<span style={{display:"inline-block",width:7,height:13,background:"#475569",borderRadius:2,marginLeft:2,animation:"blink .7s step-end infinite",verticalAlign:"middle"}}/>}</div>
+                {!m.streaming&&m.source&&<AiBadge source={m.source}/>}
               </div>
             </div>
           ))}
@@ -1476,6 +2011,206 @@ ${NG_CONTEXT}`,SYS(exam,subject,year));
 // ═══════════════════════════════════════════════════════════════════════════
 // STUDY TOOLS
 // ═══════════════════════════════════════════════════════════════════════════
+// ── SPACED REPETITION REVIEW PANEL ────────────────────────────────────────
+function ReviewPanel() {
+  const [reviews] = useState(()=>getDueReviews());
+  const [revealed,setRevealed]=useState(false);
+  const [done,setDone]=useState([]);
+  const pending=reviews.filter((_,i)=>!done.includes(i));
+
+  if(!reviews.length) return(
+    <Card style={{textAlign:"center",padding:40}}>
+      <div style={{fontSize:48,marginBottom:12}}>🎉</div>
+      <div style={{fontWeight:800,fontSize:16,color:C.textLight,marginBottom:6}}>No reviews due!</div>
+      <div style={{fontSize:13,color:C.muted,lineHeight:1.7}}>Complete quizzes, get questions wrong, and they'll appear here for spaced review.</div>
+      <div style={{marginTop:12,background:C.purple+"18",borderRadius:10,padding:"10px 14px",textAlign:"left"}}>
+        <div style={{fontSize:12,color:C.purple,fontWeight:700}}>📅 How Spaced Repetition Works</div>
+        <div style={{fontSize:12,color:C.muted,marginTop:4,lineHeight:1.7}}>Wrong answers return after 1 day → 3 days → 7 days → 14 days. Answer correctly to advance.</div>
+      </div>
+    </Card>
+  );
+
+  if(!pending.length) return(
+    <Card style={{textAlign:"center",padding:32,background:`linear-gradient(135deg,${C.purple}22,${C.card})`,borderColor:C.purple+"44"}}>
+      <div style={{fontSize:48,marginBottom:8}}>🏆</div>
+      <div style={{fontWeight:800,fontSize:16,color:C.purple}}>All {reviews.length} reviews done!</div>
+      <div style={{fontSize:12,color:C.muted,marginTop:6}}>Great work. Come back tomorrow for more.</div>
+    </Card>
+  );
+
+  const item=pending[0];
+  const q=item.question;
+  return(
+    <div>
+      <Card style={{background:C.purple+"0a",borderColor:C.purple+"33"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <Label c={C.purple}>🔁 Spaced Review</Label>
+          <span style={{fontSize:12,color:C.muted}}>{pending.length} remaining · {item.subject}</span>
+        </div>
+        {q.passage&&(
+          <div style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:12,marginBottom:10}}>
+            <div style={{fontSize:10,fontWeight:800,color:C.gold,marginBottom:5,textTransform:"uppercase",letterSpacing:1}}>📖 Passage</div>
+            <div style={{fontSize:12,color:"#cbd5e1",lineHeight:1.8,fontStyle:"italic"}}>{q.passage}</div>
+          </div>
+        )}
+        <div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight,marginBottom:12}}>{q.q}</div>
+        {!revealed?(
+          <button onClick={()=>setRevealed(true)} style={{width:"100%",background:C.purple,border:"none",borderRadius:12,padding:"13px 0",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>👁️ Reveal Answer</button>
+        ):(
+          <>
+            <Card style={{background:C.green+"18",borderColor:C.green+"44"}}>
+              <div style={{fontSize:12,fontWeight:800,color:C.green,marginBottom:4}}>✅ Correct Answer: {q.answer}</div>
+              <div style={{fontSize:13,color:C.textLight,lineHeight:1.7}}><b>{q.options?.[q.answer]}</b> — {q.explanation}</div>
+            </Card>
+            <div style={{display:"flex",gap:8,marginTop:8}}>
+              <button onClick={()=>{clearReviewItem(q);setDone(d=>[...d,reviews.indexOf(item)]);setRevealed(false);}} style={{flex:1,background:C.green,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>✅ Got it!</button>
+              <button onClick={()=>{scheduleReview(q,item.subject,item.exam);setDone(d=>[...d,reviews.indexOf(item)]);setRevealed(false);}} style={{flex:1,background:C.red+"22",border:`1px solid ${C.red}44`,borderRadius:12,padding:"12px 0",color:C.red,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>❌ Still learning</button>
+            </div>
+          </>
+        )}
+      </Card>
+      <div style={{background:C.border,borderRadius:4,height:5,marginBottom:4}}>
+        <div style={{background:C.purple,height:"100%",borderRadius:4,width:`${((reviews.length-pending.length)/reviews.length)*100}%`,transition:"width .5s"}}/>
+      </div>
+      <div style={{fontSize:11,color:C.muted,textAlign:"center"}}>{reviews.length-pending.length}/{reviews.length} reviewed</div>
+    </div>
+  );
+}
+
+// ── WEAKNESS DRILL PANEL ───────────────────────────────────────────────────
+function WeaknessPanel() {
+  const weakTopics=getWeakTopics();
+  const [drilling,setDrilling]=useState(null);
+  const [drillQs,setDrillQs]=useState([]);
+  const [drillCur,setDrillCur]=useState(0);
+  const [drillSel,setDrillSel]=useState(null);
+  const [drillAnswered,setDrillAnswered]=useState(false);
+  const [drillScore,setDrillScore]=useState(0);
+  const [loadingDrill,setLoadingDrill]=useState(false);
+
+  const startDrill = async (topic) => {
+    setLoadingDrill(true);
+    setDrilling(topic);
+    try {
+      const {questions}=await fetchQuestions(topic.subject,"waec",null,10);
+      const topicQs=questions.filter(q=>(q.topic||"").toLowerCase().includes(topic.topic.toLowerCase()));
+      setDrillQs(topicQs.length>=4?topicQs:questions.slice(0,10));
+    } catch { setDrillQs([]); }
+    setDrillCur(0);setDrillSel(null);setDrillAnswered(false);setDrillScore(0);
+    setLoadingDrill(false);
+  };
+
+  if(loadingDrill) return(
+    <Card style={{textAlign:"center",padding:32}}>
+      <div style={{fontSize:32,marginBottom:8}}>⏳</div>
+      <div style={{color:C.muted}}>Loading drill questions for {drilling?.topic}...</div>
+    </Card>
+  );
+
+  // Active drill screen
+  if(drilling&&drillQs.length>0&&drillCur<drillQs.length){
+    const q=drillQs[drillCur];
+    return(
+      <div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+          <button onClick={()=>{setDrilling(null);setDrillQs([]);}} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+          <div style={{flex:1,fontSize:13,fontWeight:700,color:C.red}}>💪 {drilling.topic} · Q{drillCur+1}/{drillQs.length}</div>
+          <span style={{fontSize:12,color:C.green,fontWeight:700}}>✅ {drillScore}</span>
+        </div>
+        <div style={{background:C.border,borderRadius:3,height:4,marginBottom:12}}>
+          <div style={{background:C.red,height:"100%",borderRadius:3,width:`${(drillCur/drillQs.length)*100}%`,transition:"width .4s"}}/>
+        </div>
+        <Card style={{background:C.red+"11",borderColor:C.red+"33"}}>
+          {q.passage&&<div style={{background:C.card2,borderRadius:8,padding:10,marginBottom:10,fontSize:12,color:"#cbd5e1",lineHeight:1.7,fontStyle:"italic"}}>{q.passage}</div>}
+          <div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{q.q}</div>
+        </Card>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {["A","B","C","D"].map(l=>{
+            const t=(q.options||{})[l]||"";
+            if(!t)return null;
+            const ok=l===q.answer,isSel=drillSel===l;
+            let bg=C.card,border=C.border,color=C.textLight;
+            if(drillAnswered){if(ok){bg=C.green+"22";border=C.green;color=C.green;}else if(isSel){bg=C.red+"22";border=C.red;color=C.red;}}
+            else if(isSel){bg=C.blue+"18";border=C.blue;}
+            return(
+              <button key={l} onClick={()=>{
+                if(drillAnswered)return;
+                setDrillSel(l);setDrillAnswered(true);
+                const correct=l===q.answer;
+                if(correct){setDrillScore(s=>s+1);clearReviewItem(q);updateTopicStats(q.topic||drilling.topic,drilling.subject,true);}
+                else{scheduleReview(q,drilling.subject,"waec");updateTopicStats(q.topic||drilling.topic,drilling.subject,false);}
+              }} style={{background:bg,border:`2px solid ${border}`,borderRadius:12,padding:"12px 14px",color,fontSize:13,textAlign:"left",cursor:drillAnswered?"default":"pointer",display:"flex",gap:10,alignItems:"center",fontFamily:"inherit"}}>
+                <span style={{width:26,height:26,borderRadius:"50%",background:drillAnswered&&ok?C.green:drillAnswered&&isSel?C.red:C.card2,color:drillAnswered&&(ok||isSel)?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,flexShrink:0}}>
+                  {drillAnswered?(ok?"✓":isSel?"✗":l):l}
+                </span>
+                {t}
+              </button>
+            );
+          })}
+        </div>
+        {drillAnswered&&(
+          <div style={{marginTop:10}}>
+            <Card style={{background:drillSel===q.answer?C.green+"18":C.red+"18",borderColor:drillSel===q.answer?C.green:C.red}}>
+              <div style={{fontWeight:700,color:drillSel===q.answer?C.green:C.red,marginBottom:4}}>
+                {drillSel===q.answer?"✅ Correct!":"❌ Wrong — Correct: "+q.answer}
+              </div>
+              <div style={{fontSize:12,color:C.textLight,lineHeight:1.6}}>{q.explanation}</div>
+            </Card>
+            <button onClick={()=>{
+              if(drillCur+1>=drillQs.length){setDrilling(null);setDrillQs([]);}
+              else{setDrillCur(c=>c+1);setDrillSel(null);setDrillAnswered(false);}
+            }} style={{width:"100%",background:C.red,border:"none",borderRadius:12,padding:"13px 0",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit",marginTop:8}}>
+              {drillCur+1>=drillQs.length?"🏁 Finish Drill":"Next →"}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Drill finished
+  if(drilling&&drillCur>=drillQs.length) return(
+    <Card style={{textAlign:"center",padding:32,background:`linear-gradient(135deg,${C.green}22,${C.card})`,borderColor:C.green+"44"}}>
+      <div style={{fontSize:48,marginBottom:8}}>🎯</div>
+      <div style={{fontWeight:800,fontSize:16,color:C.green}}>Drill complete!</div>
+      <div style={{fontSize:13,color:C.muted,marginTop:4}}>{drillScore}/{drillQs.length} correct on {drilling.topic}</div>
+      <button onClick={()=>{setDrilling(null);setDrillQs([]);}} style={{marginTop:16,background:C.green,border:"none",borderRadius:12,padding:"12px 24px",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>← Back to Topics</button>
+    </Card>
+  );
+
+  // Topic list
+  return(
+    <div>
+      <Card style={{background:C.red+"0a",borderColor:C.red+"33"}}>
+        <Label c={C.red}>💪 Weak Topics — Targeted Drill</Label>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>Topics where you've scored below 50% in at least 3 questions. Tap Drill to focus practice.</div>
+      </Card>
+      {!weakTopics.length?(
+        <Card style={{textAlign:"center",padding:32}}>
+          <div style={{fontSize:40,marginBottom:8}}>📊</div>
+          <div style={{fontWeight:700,color:C.textLight,marginBottom:4}}>No weak topics yet</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.7}}>Complete quizzes on multiple topics to see your weak areas appear here.</div>
+        </Card>
+      ):weakTopics.map((t,i)=>(
+        <Card key={i} style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:C.textLight,marginBottom:2}}>{t.topic}</div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>{t.subject} · {t.total} questions attempted</div>
+            <div style={{background:C.border,borderRadius:4,height:6}}>
+              <div style={{background:t.pct<30?C.red:C.orange,height:"100%",borderRadius:4,width:t.pct+"%",transition:"width 1s"}}/>
+            </div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontWeight:900,fontSize:20,color:t.pct<30?C.red:C.orange}}>{t.pct}%</div>
+            <div style={{fontSize:10,color:C.muted,marginBottom:4}}>{t.total} attempts</div>
+            <button onClick={()=>startDrill(t)} style={{background:C.red,border:"none",borderRadius:8,padding:"7px 16px",color:"#fff",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Drill →</button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 function StudyTools() {
   const [sub,setSub]=useState("keypoints");
   const [exam,setExam]=useState("WAEC");
@@ -1677,16 +2412,21 @@ D7-F9 (below 45%): [X]%
     setLoading(false);
   };
 
+  const dueCount = getDueReviews().length;
+  const weakCount = getWeakTopics().length;
+
   const TOOLS=[
-    {id:"keypoints",icon:"📌",label:"Key Points",color:C.gold},
-    {id:"definitions",icon:"📖",label:"Glossary",color:C.sky},
-    {id:"focusareas",icon:"🎯",label:"Focus Areas",color:C.red},
-    {id:"mnemonics",icon:"🧠",label:"Mnemonics",color:C.pink},
-    {id:"timetable",icon:"📅",label:"Timetable",color:C.green},
-    {id:"examstrategy",icon:"🏆",label:"Strategy",color:C.purple},
-    {id:"maths",icon:"📐",label:"Maths Solver",color:C.blue},
-    {id:"predict",icon:"📈",label:"Predict Grade",color:C.orange},
-    {id:"countdown",icon:"⏰",label:"Countdown",color:C.green},
+    {id:"keypoints",  icon:"📌", label:"Key Points",   color:C.gold},
+    {id:"definitions",icon:"📖", label:"Glossary",     color:C.sky},
+    {id:"focusareas", icon:"🎯", label:"Focus Areas",  color:C.red},
+    {id:"mnemonics",  icon:"🧠", label:"Mnemonics",    color:C.pink},
+    {id:"timetable",  icon:"📅", label:"Timetable",    color:C.green},
+    {id:"examstrategy",icon:"🏆",label:"Strategy",     color:C.purple},
+    {id:"maths",      icon:"📐", label:"Maths Solver", color:C.blue},
+    {id:"predict",    icon:"📈", label:"Predict Grade",color:C.orange},
+    {id:"countdown",  icon:"⏰", label:"Countdown",    color:C.green},
+    {id:"review",     icon:"🔁", label:"Due Reviews",  color:C.purple, badge:dueCount},
+    {id:"weakness",   icon:"💪", label:"Weak Topics",  color:C.red,    badge:weakCount},
   ];
   const at=TOOLS.find(t=>t.id===sub);
 
@@ -1694,7 +2434,8 @@ D7-F9 (below 45%): [X]%
     <div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:16}}>
         {TOOLS.map(t=>(
-          <button key={t.id} onClick={()=>{setSub(t.id);setOut("");setAiSource("");}} style={{background:sub===t.id?t.color+"22":C.card,border:`1.5px solid ${sub===t.id?t.color:C.border}`,borderRadius:12,padding:"10px 4px",color:sub===t.id?t.color:C.muted,fontWeight:sub===t.id?800:400,fontSize:9,cursor:"pointer",fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <button key={t.id} onClick={()=>{setSub(t.id);setOut("");setAiSource("");}} style={{background:sub===t.id?t.color+"22":C.card,border:`1.5px solid ${sub===t.id?t.color:C.border}`,borderRadius:12,padding:"10px 4px",color:sub===t.id?t.color:C.muted,fontWeight:sub===t.id?800:400,fontSize:9,cursor:"pointer",fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:4,position:"relative"}}>
+            {t.badge>0&&<span style={{position:"absolute",top:4,right:4,background:t.color,color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.badge>9?"9+":t.badge}</span>}
             <span style={{fontSize:22}}>{t.icon}</span>{t.label}
           </button>
         ))}
@@ -1809,7 +2550,13 @@ D7-F9 (below 45%): [X]%
         </>
       )}
 
-      {/* Output */}
+      {/* ── SPACED REPETITION REVIEW PANEL */}
+      {sub==="review"&&<ReviewPanel/>}
+
+      {/* ── WEAKNESS DRILL PANEL */}
+      {sub==="weakness"&&<WeaknessPanel/>}
+
+            {/* Output */}
       {out&&["keypoints","definitions","focusareas","mnemonics","timetable","examstrategy","maths","predict"].includes(sub)&&(
         <>
           <Out text={out} color={at?.color||C.gold} source={aiSource}/>
@@ -1819,6 +2566,392 @@ D7-F9 (below 45%): [X]%
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// XP TOAST — floats up when XP is earned
+// ═══════════════════════════════════════════════════════════════════════════
+function XPToast({ events, onClear }) {
+  useEffect(()=>{ if(events.length>0){ const t=setTimeout(onClear, 3500); return()=>clearTimeout(t); } },[events]);
+  if(!events.length) return null;
+  return(
+    <div style={{position:"fixed",top:70,right:12,zIndex:999,display:"flex",flexDirection:"column",gap:6,pointerEvents:"none"}}>
+      {events.slice(0,4).map((e,i)=>(
+        <div key={i} style={{background:e.type==="achievement"?C.purple:C.gold,color:"#000",borderRadius:12,padding:"8px 14px",fontWeight:800,fontSize:13,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",animation:"slideIn .4s ease",display:"flex",alignItems:"center",gap:8}}>
+          {e.type==="achievement"?<span style={{fontSize:18}}>{e.icon}</span>:<span>+{e.xp} XP</span>}
+          {e.type==="achievement"?<span style={{color:"#fff"}}>{e.name} unlocked!</span>:<span>{e.reason}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEVEL BADGE
+// ═══════════════════════════════════════════════════════════════════════════
+function LevelBadge({ user, compact=false }) {
+  if(!user) return null;
+  const lvl = getLevelClient(user.xp||0);
+  if(compact) return(
+    <div style={{display:"flex",alignItems:"center",gap:5,background:lvl.color+"22",border:`1px solid ${lvl.color}44`,borderRadius:20,padding:"3px 10px"}}>
+      <span style={{fontSize:14}}>{lvl.badge}</span>
+      <span style={{fontSize:11,fontWeight:800,color:lvl.color}}>{lvl.name}</span>
+      <span style={{fontSize:10,color:C.muted}}>·</span>
+      <span style={{fontSize:11,fontWeight:700,color:C.muted}}>{user.xp||0} XP</span>
+    </div>
+  );
+  return(
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{width:44,height:44,background:lvl.color+"22",border:`2px solid ${lvl.color}`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>{lvl.badge}</div>
+        <div>
+          <div style={{fontWeight:800,fontSize:15,color:lvl.color}}>{lvl.name}</div>
+          <div style={{fontSize:12,color:C.muted}}>Level {lvl.level} · {user.xp||0} XP total</div>
+        </div>
+      </div>
+      <div style={{background:C.border,borderRadius:6,height:8,overflow:"hidden"}}>
+        <div style={{background:lvl.color,height:"100%",width:lvl.progress+"%",borderRadius:6,transition:"width 1s ease"}}/>
+      </div>
+      {lvl.nextXP&&<div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:10,color:C.muted}}><span>{user.xp||0} XP</span><span>{lvl.xpToNext} XP to Level {lvl.level+1}</span></div>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTH SCREEN — Login & Register
+// ═══════════════════════════════════════════════════════════════════════════
+function AuthScreen({ onAuth }) {
+  const [mode,setMode]  = useState("login");
+  const [name,setName]  = useState("");
+  const [email,setEmail]= useState("");
+  const [pass,setPass]  = useState("");
+  const [exam,setExam]  = useState("WAEC");
+  const [state,setSt]   = useState("");
+  const [subs,setSubs]  = useState([]);
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]    = useState("");
+
+  const toggleSub = (s) => setSubs(prev => prev.includes(s)?prev.filter(x=>x!==s):[...prev,s]);
+
+  const submit = async () => {
+    setErr(""); setLoading(true);
+    try {
+      const path = mode==="login" ? "/api/auth/login" : "/api/auth/register";
+      const body = mode==="login" ? {email,password:pass} : {name,email,password:pass,exam,state,subjects:subs};
+      const data = await apiCall(path,"POST",body);
+      saveAuth(data.token, data.user);
+      onAuth(data.user, data.newlyEarned||[]);
+    } catch(e) { setErr(e.message); }
+    setLoading(false);
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{width:"100%",maxWidth:420}}>
+        {/* Logo */}
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{width:68,height:68,background:`linear-gradient(135deg,${C.gold},${C.goldD})`,borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",fontSize:34,margin:"0 auto 12px",boxShadow:`0 0 30px ${C.gold}44`}}>🏆</div>
+          <div style={{fontWeight:900,fontSize:26,color:C.textLight}}>ExamAce <span style={{color:C.gold}}>AI</span></div>
+          <div style={{fontSize:12,color:C.muted,marginTop:4}}>Nigeria's #1 WAEC · NECO · JAMB Tutor</div>
+        </div>
+
+        <Card>
+          {/* Mode toggle */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:20}}>
+            {[["login","Sign In"],["register","Create Account"]].map(([m,l])=>(
+              <button key={m} onClick={()=>{setMode(m);setErr("");}} style={{background:mode===m?C.gold:"transparent",border:`1.5px solid ${mode===m?C.gold:C.border}`,borderRadius:10,padding:"10px 0",color:mode===m?"#000":C.muted,fontWeight:mode===m?800:400,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+            ))}
+          </div>
+
+          {err&&<div style={{background:C.red+"18",border:`1px solid ${C.red}33`,borderRadius:10,padding:"10px 12px",color:C.red,fontSize:13,marginBottom:14,fontWeight:600}}>⚠️ {err}</div>}
+
+          {mode==="register"&&(
+            <div style={{marginBottom:12}}>
+              <Label>Full Name</Label>
+              <Inp value={name} onChange={setName} placeholder="e.g. Chukwuemeka Obi"/>
+            </div>
+          )}
+
+          <div style={{marginBottom:12}}>
+            <Label>Email Address</Label>
+            <Inp value={email} onChange={setEmail} placeholder="your@email.com" type="email"/>
+          </div>
+
+          <div style={{marginBottom:mode==="register"?12:20}}>
+            <Label>Password</Label>
+            <Inp value={pass} onChange={setPass} placeholder={mode==="register"?"At least 6 characters":"Your password"} type="password"/>
+          </div>
+
+          {mode==="register"&&(
+            <>
+              <div style={{marginBottom:12}}>
+                <Label>Target Exam</Label>
+                <Pills options={["WAEC","NECO","JAMB"]} value={exam} onChange={setExam} color={C.gold}/>
+              </div>
+              <div style={{marginBottom:12}}>
+                <Label>State of Origin</Label>
+                <Sel value={state} onChange={setSt} options={NIGERIA_STATES} placeholder="Select state"/>
+              </div>
+              <div style={{marginBottom:20}}>
+                <Label>Your Subjects (select all you're taking)</Label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {["Mathematics","English Language","Physics","Chemistry","Biology","Economics","Government","Literature in English","Geography","Agricultural Science","Accounting","Commerce"].map(s=>(
+                    <button key={s} onClick={()=>toggleSub(s)} style={{background:subs.includes(s)?C.gold+"28":"transparent",border:`1.5px solid ${subs.includes(s)?C.gold:C.border}`,borderRadius:20,padding:"5px 12px",color:subs.includes(s)?C.gold:C.muted,fontWeight:subs.includes(s)?800:400,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{s.split(" ")[0]}</button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          <Btn onClick={submit} loading={loading} color={C.gold}>
+            {mode==="login"?"🚀 Sign In":"🎉 Create My Account"}
+          </Btn>
+
+          {mode==="login"&&(
+            <div style={{textAlign:"center",marginTop:14,fontSize:12,color:C.muted}}>
+              No account? <button onClick={()=>setMode("register")} style={{background:"none",border:"none",color:C.gold,fontWeight:700,cursor:"pointer",fontFamily:"inherit",fontSize:12}}>Create one free →</button>
+            </div>
+          )}
+        </Card>
+
+        <div style={{textAlign:"center",marginTop:16,fontSize:11,color:C.sub,lineHeight:1.7}}>
+          🔒 Your data stays private · 🇳🇬 Made for Nigerian students
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROFILE SCREEN
+// ═══════════════════════════════════════════════════════════════════════════
+function ProfileScreen({ user, onClose, onLogout, onUpdate }) {
+  const [tab,setTab]     = useState("stats");
+  const [history,setHistory]=useState([]);
+  const [leaderboard,setLeaderboard]=useState([]);
+  const [loadingH,setLoadingH]=useState(false);
+  const [editMode,setEditMode]=useState(false);
+  const [editName,setEditName]=useState(user.name||"");
+  const [editExam,setEditExam]=useState(user.exam||"WAEC");
+  const [editState,setEditState]=useState(user.state||"");
+  const [saving,setSaving]=useState(false);
+
+  const lvl = getLevelClient(user.xp||0);
+  const stats = user.stats||{};
+  const accuracy = stats.totalAnswered>0 ? Math.round((stats.totalCorrect/stats.totalAnswered)*100) : 0;
+
+  useEffect(()=>{
+    if(tab==="history" && !history.length){
+      setLoadingH(true);
+      apiCall("/api/progress/history?limit=50").then(d=>setHistory(d.history||[])).catch(()=>{}).finally(()=>setLoadingH(false));
+    }
+    if(tab==="leaderboard" && !leaderboard.length){
+      apiCall("/api/leaderboard").then(d=>setLeaderboard(d.board||[])).catch(()=>{});
+    }
+  },[tab]);
+
+  const saveProfile = async () => {
+    setSaving(true);
+    try {
+      await apiCall("/api/profile","PUT",{name:editName,exam:editExam,state:editState});
+      onUpdate({...user,name:editName,exam:editExam,state:editState});
+      setEditMode(false);
+    } catch(e){alert(e.message);}
+    setSaving(false);
+  };
+
+  const quizHistory = history.filter(h=>h.type==="quiz");
+  const cbtHistory  = history.filter(h=>h.type==="cbt");
+
+  return(
+    <div style={{position:"fixed",inset:0,background:C.bg,zIndex:300,overflowY:"auto",paddingBottom:40}}>
+      {/* Header */}
+      <div style={{background:`linear-gradient(135deg,${lvl.color}22,#0a0c14)`,borderBottom:`1px solid ${C.border}`,padding:"14px 16px",position:"sticky",top:0,zIndex:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={onClose} style={{background:C.card2,border:`1px solid ${C.border}`,color:C.muted,borderRadius:10,padding:"7px 14px",cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>← Back</button>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:900,fontSize:17,color:C.textLight}}>👤 My Profile</div>
+            <div style={{fontSize:11,color:C.muted}}>{user.email}</div>
+          </div>
+          <button onClick={onLogout} style={{background:C.red+"22",border:`1px solid ${C.red}33`,color:C.red,borderRadius:10,padding:"7px 12px",cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700}}>Sign Out</button>
+        </div>
+      </div>
+
+      <div style={{padding:"16px 14px 0"}}>
+        {/* Profile card */}
+        <Card style={{background:`linear-gradient(135deg,${lvl.color}18,${C.card})`,borderColor:lvl.color+"44"}}>
+          <div style={{display:"flex",gap:14,alignItems:"center",marginBottom:14}}>
+            <div style={{width:56,height:56,background:lvl.color+"22",border:`2px solid ${lvl.color}`,borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,flexShrink:0}}>{lvl.badge}</div>
+            <div style={{flex:1}}>
+              {editMode?(
+                <input value={editName} onChange={e=>setEditName(e.target.value)} style={{background:C.card2,border:`1.5px solid ${C.border}`,borderRadius:8,padding:"6px 10px",color:C.textLight,fontSize:15,fontWeight:800,fontFamily:"inherit",width:"100%",marginBottom:4}}/>
+              ):(
+                <div style={{fontWeight:900,fontSize:18,color:C.textLight,marginBottom:2}}>{user.name}</div>
+              )}
+              <div style={{fontSize:12,color:lvl.color,fontWeight:700}}>{lvl.badge} {lvl.name} · Level {lvl.level}</div>
+              <div style={{fontSize:11,color:C.muted}}>{user.state||""} {user.exam} Candidate</div>
+            </div>
+            {editMode?(
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={saveProfile} disabled={saving} style={{background:C.green,border:"none",borderRadius:8,padding:"7px 12px",color:"#fff",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{saving?"...":"Save"}</button>
+                <button onClick={()=>setEditMode(false)} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+              </div>
+            ):(
+              <button onClick={()=>setEditMode(true)} style={{background:C.card2,border:`1px solid ${C.border}`,borderRadius:8,padding:"7px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>✏️ Edit</button>
+            )}
+          </div>
+          {editMode&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+              <div><Label>Exam</Label><Sel value={editExam} onChange={setEditExam} options={["WAEC","NECO","JAMB"]} placeholder="Exam"/></div>
+              <div><Label>State</Label><Sel value={editState} onChange={setEditState} options={NIGERIA_STATES} placeholder="State"/></div>
+            </div>
+          )}
+          {/* XP bar */}
+          <div style={{background:C.border,borderRadius:6,height:10,overflow:"hidden",marginBottom:4}}>
+            <div style={{background:lvl.color,height:"100%",width:lvl.progress+"%",borderRadius:6,transition:"width 1.5s ease"}}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted}}>
+            <span>{user.xp||0} XP</span>
+            {lvl.nextXP?<span>{lvl.xpToNext} XP to {LEVELS_CLIENT[lvl.level]?.name||"Max"}</span>:<span>Max level reached! 💎</span>}
+          </div>
+        </Card>
+
+        {/* Quick stats */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:14}}>
+          {[
+            ["🔥",user.currentStreak||0,"Day Streak",C.orange],
+            ["📝",stats.quizzesCompleted||0,"Quizzes",C.blue],
+            ["🖥️",stats.cbtCompleted||0,"CBT Tests",C.purple],
+            ["💯",accuracy+"%","Accuracy",C.green],
+          ].map(([icon,val,label,color])=>(
+            <div key={label} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 8px",textAlign:"center"}}>
+              <div style={{fontSize:16,marginBottom:2}}>{icon}</div>
+              <div style={{fontWeight:900,fontSize:16,color}}>{val}</div>
+              <div style={{fontSize:9,color:C.muted,marginTop:2}}>{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tabs */}
+        <div style={{display:"flex",gap:6,marginBottom:14,overflowX:"auto"}}>
+          {[["stats","📊 Stats"],["achievements","🏆 Badges"],["history","📋 History"],["leaderboard","🥇 Leaderboard"]].map(([t,l])=>(
+            <button key={t} onClick={()=>setTab(t)} style={{background:tab===t?C.gold+"22":"transparent",border:`1px solid ${tab===t?C.gold:C.border}`,borderRadius:20,padding:"6px 14px",color:tab===t?C.gold:C.muted,fontWeight:tab===t?800:400,fontSize:11,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",flexShrink:0}}>{l}</button>
+          ))}
+        </div>
+
+        {/* Stats tab */}
+        {tab==="stats"&&(
+          <>
+            <Card>
+              <Label c={C.gold}>📊 Study Statistics</Label>
+              {[
+                ["Total Questions Answered", stats.totalAnswered||0],
+                ["Total Correct Answers",    stats.totalCorrect||0],
+                ["Overall Accuracy",         accuracy+"%"],
+                ["Quizzes Completed",         stats.quizzesCompleted||0],
+                ["JAMB CBT Mocks",            stats.cbtCompleted||0],
+                ["Best JAMB Score",           (stats.bestJAMB||0)+"/400"],
+                ["Longest Streak",            (stats.longestStreak||0)+" days"],
+                ["Total Study Days",          (user.totalStudyDays||0)+" days"],
+                ["Reviews Completed",         stats.reviewsCompleted||0],
+                ["Subjects Practiced",        Object.keys(stats.subjectsPracticed||{}).length],
+              ].map(([label,val])=>(
+                <div key={label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:13,color:C.muted}}>{label}</span>
+                  <span style={{fontSize:13,fontWeight:800,color:C.textLight}}>{val}</span>
+                </div>
+              ))}
+            </Card>
+            {Object.keys(stats.subjectsPracticed||{}).length>0&&(
+              <Card>
+                <Label c={C.sky}>Subjects Practiced</Label>
+                {Object.entries(stats.subjectsPracticed||{}).sort((a,b)=>b[1]-a[1]).map(([subj,count])=>(
+                  <div key={subj} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}>
+                    <span style={{fontSize:13,color:C.textLight}}>{subj}</span>
+                    <span style={{background:C.blue+"22",color:C.sky,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>{count} sessions</span>
+                  </div>
+                ))}
+              </Card>
+            )}
+          </>
+        )}
+
+        {/* Achievements tab */}
+        {tab==="achievements"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {ACHIEVEMENTS_CLIENT.map(a=>{
+              const earned=(user.achievements||[]).includes(a.id);
+              return(
+                <div key={a.id} style={{background:earned?C.card:C.card2,border:`1px solid ${earned?C.gold+"44":C.border}`,borderRadius:14,padding:14,opacity:earned?1:0.5,transition:"all .3s"}}>
+                  <div style={{fontSize:28,marginBottom:6}}>{earned?a.icon:"🔒"}</div>
+                  <div style={{fontSize:13,fontWeight:800,color:earned?C.gold:C.muted,marginBottom:3}}>{a.name}</div>
+                  <div style={{fontSize:11,color:C.sub,lineHeight:1.5}}>{a.desc}</div>
+                  {earned&&<div style={{marginTop:6,fontSize:10,color:C.green,fontWeight:700}}>✅ Earned!</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* History tab */}
+        {tab==="history"&&(
+          <>
+            {loadingH?<Card style={{textAlign:"center",padding:32}}><div style={{color:C.muted}}>Loading history...</div></Card>:
+            !history.length?<Card style={{textAlign:"center",padding:32}}><div style={{fontSize:32,marginBottom:8}}>📋</div><div style={{color:C.muted}}>No study sessions yet</div></Card>:
+            <>
+              <Card>
+                <Label>All Sessions ({history.length})</Label>
+                {history.map((h,i)=>{
+                  const grade=h.type==="quiz"?gradeFromPct(h.pct||0):null;
+                  return(
+                    <div key={i} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}>
+                      <div style={{width:36,height:36,background:h.type==="cbt"?C.purple+"22":C.blue+"22",border:`1px solid ${h.type==="cbt"?C.purple:C.blue}33`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{h.type==="cbt"?"🖥️":"📝"}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.textLight,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.type==="cbt"?"JAMB CBT Mock":`${h.exam||""} ${h.subject||""}`}</div>
+                        <div style={{fontSize:11,color:C.muted}}>{h.type==="quiz"&&`${h.qtype==="year"?h.year||"":"Random"} · `}{new Date(h.ts).toLocaleDateString("en-NG",{day:"numeric",month:"short",year:"numeric"})}</div>
+                      </div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        {h.type==="cbt"?<div style={{fontWeight:900,fontSize:15,color:C.purple}}>{h.jambScore}<span style={{fontSize:10,color:C.muted}}>/400</span></div>:<div style={{fontWeight:900,fontSize:15,color:grade?.c||C.muted}}>{h.pct}%</div>}
+                        {grade&&<div style={{fontSize:10,color:grade.c}}>Grade {grade.g}</div>}
+                        {h.xpEarned>0&&<div style={{fontSize:10,color:C.gold}}>+{h.xpEarned} XP</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </Card>
+              <a href={`https://wa.me/?text=${encodeURIComponent(`📊 My ExamAce AI Progress\n🔥 Streak: ${user.currentStreak||0} days\n⭐ Level: ${lvl.name}\n📝 Quizzes: ${stats.quizzesCompleted||0}\n💯 Accuracy: ${accuracy}%\n\nExamAce AI 🇳🇬`)}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:C.wa,borderRadius:13,padding:"14px 0",color:"#fff",fontWeight:800,fontSize:14,textDecoration:"none"}}>💬 Share Progress on WhatsApp</a>
+            </>}
+          </>
+        )}
+
+        {/* Leaderboard tab */}
+        {tab==="leaderboard"&&(
+          <Card>
+            <Label c={C.gold}>🥇 Top Students</Label>
+            {!leaderboard.length?<div style={{textAlign:"center",color:C.muted,padding:20}}>Loading...</div>:
+            leaderboard.map((entry,i)=>{
+              const entryLvl=getLevelClient(entry.xp||0);
+              const isMe = entry.name===user.name;
+              return(
+                <div key={i} style={{display:"flex",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`,alignItems:"center",background:isMe?C.gold+"0a":"transparent",borderRadius:isMe?8:0,paddingInline:isMe?8:0}}>
+                  <div style={{width:28,fontWeight:900,fontSize:i<3?18:13,color:i===0?C.gold:i===1?"#94a3b8":i===2?C.orange:C.muted,flexShrink:0,textAlign:"center"}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}</div>
+                  <div style={{fontSize:22,flexShrink:0}}>{entryLvl.badge}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:isMe?C.gold:C.textLight}}>{entry.name}{isMe?" (You)":""}</div>
+                    <div style={{fontSize:11,color:C.muted}}>{entryLvl.name} · {entry.stats?.totalAnswered||0} questions</div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div style={{fontWeight:900,fontSize:14,color:entryLvl.color}}>{entry.xp} XP</div>
+                    {entry.currentStreak>0&&<div style={{fontSize:10,color:C.orange}}>🔥{entry.currentStreak}d</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
@@ -1852,43 +2985,138 @@ class ErrorBoundary extends Component {
 }
 
 export default function App() {
-  const [tab,setTab]=useState("ask");
-  const [showHistory,setShowHistory]=useState(false);
-  const [historyCount,setHistoryCount]=useState(getHistory().length);
-  const [streak]=useState(getStreak());
+  const [tab,setTab]         = useState("ask");
+  const [isOnline,setIsOnline]= useState(navigator.onLine);
+  const [user,setUser]       = useState(()=>getUser());
+  const [showProfile,setShowProfile]= useState(false);
+  const [showAuth,setShowAuth]      = useState(false);
+  const [xpEvents,setXpEvents]     = useState([]);
+  const [showLevelUp,setShowLevelUp]= useState(null);
 
-  const handleSaveHistory = useCallback((entry)=>{saveHistory(entry);setHistoryCount(getHistory().length);},[]);
+  // Register PWA service worker
+  useEffect(()=>{
+    if("serviceWorker" in navigator){
+      navigator.serviceWorker.register("/service-worker.js").catch(()=>{});
+    }
+    const onOnline  = ()=>setIsOnline(true);
+    const onOffline = ()=>setIsOnline(false);
+    window.addEventListener("online",  onOnline);
+    window.addEventListener("offline", onOffline);
+    return()=>{window.removeEventListener("online",onOnline);window.removeEventListener("offline",onOffline);};
+  },[]);
 
+  // Save a quiz/CBT result to the server and award XP
+  const handleSaveHistory = useCallback(async (entry) => {
+    saveHistory(entry); // always save locally too
+    if(!getToken()) return; // not logged in — local only
+    try {
+      const data = await apiCall("/api/progress/save","POST",entry);
+      // Update local user with new XP/level
+      const updated = {...(getUser()||{}), xp:data.xp, level:data.level,
+        currentStreak:data.currentStreak, longestStreak:data.longestStreak,
+        achievements:[...(getUser()?.achievements||[]), ...(data.newlyEarned||[]).map(a=>a.id)],
+      };
+      saveAuth(getToken(), updated);
+      setUser(updated);
+      // Show XP toast events
+      const events = [];
+      if(data.levelUp) setShowLevelUp(data.level);
+      events.push({type:"xp", xp:entry.type==="cbt"?60:20, reason:entry.type==="cbt"?"CBT completed":"Quiz completed"});
+      if(data.newlyEarned?.length) data.newlyEarned.forEach(a=>events.push({type:"achievement",...a}));
+      if(events.length) setXpEvents(events);
+    } catch(e) { console.warn("Could not save to server:", e.message); }
+  },[]);
+
+  const handleAuth = (userData, newlyEarned=[]) => {
+    setUser(userData);
+    setShowAuth(false);
+    if(newlyEarned.length) setXpEvents(newlyEarned.map(a=>({type:"achievement",...a})));
+    setXpEvents(prev=>[{type:"xp",xp:25,reason:"Welcome bonus!"},...prev]);
+  };
+
+  const handleLogout = () => {
+    clearAuth();
+    setUser(null);
+    setShowProfile(false);
+  };
+
+  const handleProfileUpdate = (updated) => {
+    saveAuth(getToken(), updated);
+    setUser(updated);
+  };
+
+  const navDueCount = getDueReviews().length;
   const TABS=[
     {id:"ask",   icon:"💬", label:"Ask AI"  },
     {id:"snap",  icon:"📸", label:"Snap"    },
     {id:"cbt",   icon:"🖥️", label:"JAMB CBT"},
     {id:"quiz",  icon:"📝", label:"Quiz"    },
     {id:"essay", icon:"✍️",  label:"Essay"   },
-    {id:"study", icon:"📚", label:"Study"   },
+    {id:"study", icon:"📚", label:"Study", badge:navDueCount},
   ];
+
+  // Show auth screen when user explicitly opens it (not blocking)
+  if(showAuth && !user) return <AuthScreen onAuth={handleAuth}/>;
+  if(showProfile && user) return <ProfileScreen user={user} onClose={()=>setShowProfile(false)} onLogout={handleLogout} onUpdate={handleProfileUpdate}/>;
 
   return (
     <ErrorBoundary>
     <div style={{minHeight:"100vh",background:C.bg,color:C.textLight,fontFamily:"'Segoe UI',sans-serif",paddingBottom:76}}>
-      <style>{`*{box-sizing:border-box;margin:0;padding:0}@keyframes spin{to{transform:rotate(360deg)}}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:4px}textarea,input,select,button{box-sizing:border-box}input::placeholder,textarea::placeholder{color:#64748b}select option{background:#1e2130;color:#f1f5f9}`}</style>
+      <style>{`*{box-sizing:border-box;margin:0;padding:0}@keyframes spin{to{transform:rotate(360deg)}}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}@keyframes slideIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:4px}textarea,input,select,button{box-sizing:border-box}input::placeholder,textarea::placeholder{color:#64748b}select option{background:#1e2130;color:#f1f5f9}`}</style>
 
-      {showHistory&&<HistoryDashboard onClose={()=>{setShowHistory(false);setHistoryCount(getHistory().length);}}/>}
+      {/* XP Toast notifications */}
+      <XPToast events={xpEvents} onClear={()=>setXpEvents([])}/>
+
+      {/* Level-up modal */}
+      {showLevelUp&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:998,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowLevelUp(null)}>
+          <div style={{background:`linear-gradient(135deg,${showLevelUp.color}22,${C.card})`,border:`2px solid ${showLevelUp.color}`,borderRadius:24,padding:32,textAlign:"center",maxWidth:300,animation:"fadeUp .4s ease"}}>
+            <div style={{fontSize:64,marginBottom:8}}>{showLevelUp.badge}</div>
+            <div style={{fontWeight:900,fontSize:22,color:showLevelUp.color,marginBottom:4}}>Level Up! 🎉</div>
+            <div style={{fontSize:16,color:C.textLight,marginBottom:12}}>{showLevelUp.name}</div>
+            <button onClick={()=>setShowLevelUp(null)} style={{background:showLevelUp.color,border:"none",borderRadius:12,padding:"12px 28px",color:"#000",fontWeight:800,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>Awesome! 🚀</button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
-      <div style={{background:`linear-gradient(135deg,#0a0c14,#12141e)`,borderBottom:`1px solid ${C.border}`,padding:"13px 14px",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 20px rgba(0,0,0,0.4)"}}>
+      <div style={{background:`linear-gradient(135deg,#0a0c14,#12141e)`,borderBottom:`1px solid ${C.border}`,padding:"11px 14px",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 20px rgba(0,0,0,0.4)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:42,height:42,background:`linear-gradient(135deg,${C.gold},${C.goldD})`,borderRadius:13,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,boxShadow:`0 0 20px ${C.gold}55`,flexShrink:0}}>🏆</div>
+          <div style={{width:40,height:40,background:`linear-gradient(135deg,${C.gold},${C.goldD})`,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,boxShadow:`0 0 20px ${C.gold}55`,flexShrink:0}}>🏆</div>
           <div style={{flex:1}}>
-            <div style={{fontWeight:900,fontSize:19,letterSpacing:"-0.5px",color:C.textLight}}>ExamAce <span style={{color:C.gold}}>AI</span></div>
-            <div style={{fontSize:10,color:C.sub,letterSpacing:1.5,textTransform:"uppercase"}}>WAEC · NECO · JAMB · Nigeria 🇳🇬</div>
+            <div style={{fontWeight:900,fontSize:18,letterSpacing:"-0.5px",color:C.textLight}}>ExamAce <span style={{color:C.gold}}>AI</span></div>
+            {user?(
+              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:1}}>
+                <span style={{fontSize:11,color:C.sub}}>{getLevelClient(user.xp||0).badge}</span>
+                <span style={{fontSize:10,color:C.sub}}>{getLevelClient(user.xp||0).name}</span>
+                <span style={{fontSize:10,color:C.gold,fontWeight:700}}>· {user.xp||0} XP</span>
+                {(user.currentStreak||0)>0&&<span style={{fontSize:10,color:C.orange,fontWeight:700}}>🔥{user.currentStreak}d</span>}
+              </div>
+            ):(
+              <div style={{fontSize:10,color:C.sub,textTransform:"uppercase",letterSpacing:1.2}}>WAEC · NECO · JAMB 🇳🇬</div>
+            )}
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            {streak.count>0&&<div style={{background:C.orange+"22",border:`1px solid ${C.orange}44`,color:C.orange,borderRadius:20,padding:"4px 8px",fontSize:10,fontWeight:800}}>🔥{streak.count}d</div>}
-            <button onClick={()=>setShowHistory(true)} style={{background:C.gold+"22",border:`1px solid ${C.gold}44`,color:C.gold,borderRadius:20,padding:"5px 12px",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>📊 {historyCount>0?`${historyCount} sessions`:"History"}</button>
+            {user?(
+              <button onClick={()=>setShowProfile(true)} style={{background:C.gold+"22",border:`1px solid ${C.gold}44`,color:C.gold,borderRadius:20,padding:"5px 12px",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+                👤 {user.name?.split(" ")[0]||"Profile"}
+              </button>
+            ):(
+              <button onClick={()=>setShowAuth(true)} style={{background:C.gold,border:"none",color:"#000",borderRadius:20,padding:"6px 14px",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                Sign In 🚀
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Offline banner */}
+      {!isOnline&&(
+        <div style={{background:C.orange+"22",borderBottom:`1px solid ${C.orange}44`,padding:"8px 14px",display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.orange,fontWeight:700}}>
+          <span>📵</span>
+          <span>You're offline — quiz history and saved questions still available</span>
+        </div>
+      )}
 
       {/* Tab content */}
       <div style={{padding:"14px 13px 0",animation:"fadeUp .3s ease"}}>
@@ -1905,6 +3133,7 @@ export default function App() {
         {TABS.map(t=>(
           <div key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"10px 0 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,cursor:"pointer",borderTop:tab===t.id?`2px solid ${C.gold}`:"2px solid transparent",color:tab===t.id?C.gold:C.sub,fontSize:9,fontWeight:tab===t.id?800:400,transition:"all .2s",minWidth:46}}>
             <span style={{fontSize:18}}>{t.icon}</span>{t.label}
+          {t.badge>0&&<span style={{position:"absolute",top:6,right:"calc(50% - 16px)",background:C.purple,color:"#fff",borderRadius:"50%",width:13,height:13,fontSize:8,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.badge>9?"9+":t.badge}</span>}
           </div>
         ))}
       </div>
