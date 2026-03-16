@@ -739,20 +739,22 @@ const Sel = ({value,onChange,options,placeholder}) => <select value={value} onCh
 const Btn = ({onClick,loading:l,children,color=C.gold,tc="#000",disabled,sm}) => <button onClick={onClick} disabled={l||disabled} style={{width:sm?"auto":"100%",background:l||disabled?C.card2:color,border:"none",borderRadius:sm?10:13,padding:sm?"8px 18px":"14px 20px",color:l||disabled?C.sub:tc,fontWeight:800,fontSize:sm?12:14,cursor:l||disabled?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>{l?<><span style={{width:15,height:15,border:"2px solid #444",borderTopColor:color,borderRadius:"50%",display:"inline-block",animation:"spin .7s linear infinite"}}/>Working...</>:children}</button>;
 const Out = ({text,color=C.gold,source,title="",subtitle=""}) => (
   <div style={{marginTop:12,animation:"fadeUp .4s ease"}}>
-    <div style={{background:C.card2,border:`1px solid ${color}33`,borderRadius:14,padding:16,maxHeight:460,overflowY:"auto",fontSize:13}}>
+    {/* Scrollable content area */}
+    <div style={{background:C.card2,border:`1px solid ${color}33`,borderRadius:"14px 14px 0 0",padding:16,maxHeight:420,overflowY:"auto",fontSize:13}}>
       {fmt(text,true)}
-      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:10,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
-        {source&&<AiBadge source={source}/>}
-        <div style={{marginLeft:"auto",display:"flex",gap:4}}>
-          <button title="Copy text" onClick={()=>navigator.clipboard.writeText(text)}
-            style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
-            <span style={{fontSize:12}}>📋</span> Copy
-          </button>
-          <button title="Save as PDF" onClick={()=>saveToPDF(title||"ExamAce AI", text, subtitle)}
-            style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
-            <span style={{fontSize:12}}>📄</span> PDF
-          </button>
-        </div>
+    </div>
+    {/* Toolbar — always visible below the scroll area, never hidden */}
+    <div style={{background:C.card,border:`1px solid ${color}33`,borderTop:"none",borderRadius:"0 0 14px 14px",padding:"8px 12px",display:"flex",alignItems:"center",gap:6}}>
+      {source&&<AiBadge source={source}/>}
+      <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+        <button title="Copy text" onClick={()=>{navigator.clipboard.writeText(text);}}
+          style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+          <span>📋</span> Copy
+        </button>
+        <button title="Save as PDF" onClick={()=>saveToPDF(title||"ExamAce AI", text, subtitle)}
+          style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+          <span>📄</span> PDF
+        </button>
       </div>
     </div>
   </div>
@@ -2803,13 +2805,7 @@ D7-F9 (below 45%): [X]%
 
       {/* AI output */}
       {out&&["focusareas","keypoints","mnemonics"].includes(sub)&&(
-        <>
-          <Out text={out} color={at?.color||C.gold} source={aiSource}/>
-          <div style={{display:"flex",gap:8,marginTop:10}}>
-            <button onClick={()=>navigator.clipboard.writeText(out)} style={{flex:1,background:C.card2,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 0",color:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy Notes</button>
-            <button onClick={()=>{const t="🏆 ExamAce AI — "+at?.label+"\n"+exam+" "+subject+" "+(year||"")+"\n\n"+out.slice(0,400)+"...\n\nExamAce AI 🇳🇬";if(navigator.share)navigator.share({title:"ExamAce AI",text:t});else navigator.clipboard.writeText(t);}} style={{flex:1,background:C.wa,borderRadius:10,padding:"10px 0",color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>💬 Share</button>
-          </div>
-        </>
+        <Out text={out} color={at?.color||C.gold} source="ExamAce AI" title={at?.label+" — "+exam+" "+subject} subtitle={year||""}/>
       )}
     </div>
   );
@@ -3708,7 +3704,7 @@ The JSON must have exactly these 6 string/array fields:
 - explain: 200 word explanation using Nigerian examples. Bold key terms with **bold**.
 - example: A worked ${exam} exam question with full solution. Number the steps.
 - check: One short open-ended question to test understanding.
-- quiz: Array of 5 objects each with q, options (A/B/C/D), answer (single letter), explanation.
+- quiz: Array of exactly 5 objects. Each object must have: "q" (question string), "options" (object with keys "A", "B", "C", "D" each containing option text), "answer" (one of "A","B","C","D"), "explanation" (why the answer is correct).
 - summary: 5 key points each starting with a bullet.
 
 Return ONLY the JSON. No text before or after. No code fences.`;
@@ -3743,15 +3739,40 @@ Return ONLY the JSON. No text before or after. No code fences.`;
       if(!parsed) throw new Error("AI did not return valid lesson format");
       if(!parsed.intro && !parsed.explain) throw new Error("Lesson content missing");
 
+      // Normalise quiz — handles uppercase keys, lowercase keys, array format
+      const normaliseOptions = (item) => {
+        if(!item) return item;
+        let opts = item.options || item.choices || item.opts;
+        // Array format: ["optA","optB","optC","optD"]
+        if(Array.isArray(opts)) {
+          opts = {A:opts[0]||"",B:opts[1]||"",C:opts[2]||"",D:opts[3]||""};
+        }
+        // Lowercase keys: {a:"..",b:"..",c:"..",d:".."}
+        if(opts && !opts.A && opts.a) {
+          opts = {A:opts.a,B:opts.b,C:opts.c,D:opts.d};
+        }
+        // Numbered keys: {1:"..",2:"..",3:"..",4:".."}
+        if(opts && !opts.A && opts["1"]) {
+          opts = {A:opts["1"],B:opts["2"],C:opts["3"],D:opts["4"]};
+        }
+        // Normalise answer to uppercase single letter
+        let ans = (item.answer||item.correct||"A").toString().trim().toUpperCase().slice(0,1);
+        if(!"ABCD".includes(ans)) ans = "A";
+        return {...item, options:opts||{A:"",B:"",C:"",D:""}, answer:ans};
+      };
+
       // Fill in any missing fields gracefully
       if(!parsed.quiz || !parsed.quiz.length) {
         parsed.quiz = [{
           q:`Which of the following best describes ${activeTopic}?`,
-          options:{A:"Option A",B:"Option B",C:"Option C",D:"Option D"},
+          options:{A:"The correct concept",B:"An incorrect option",C:"Another wrong option",D:"Also incorrect"},
           answer:"A",
           explanation:"Review the lesson explanation above for the correct answer."
         }];
       }
+      // Normalise every quiz item
+      parsed.quiz = parsed.quiz.map(normaliseOptions).filter(q => q.q && q.options?.A);
+
       if(!parsed.summary) parsed.summary = "✅ Review the key concepts covered in this lesson.\n✅ Practice with past questions on this topic.\n✅ Ask your teacher or use Ask AI for clarification.";
       if(!parsed.check) parsed.check = `In your own words, explain the main concept of ${activeTopic}.`;
 
@@ -3909,7 +3930,7 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
         <div>
           <Card style={{borderColor:C.blue+"44"}}>
             <Label c={C.blue}>📚 Explanation</Label>
-            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.explain,false)}</div>
+            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.explain,true)}</div>
           </Card>
           <Btn onClick={()=>setLessonStage(2)} color={C.blue} tc="#fff">✏️ See Worked Example →</Btn>
         </div>
@@ -3920,7 +3941,7 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
         <div>
           <Card style={{background:C.gold+"0a",borderColor:C.gold+"44"}}>
             <Label c={C.gold}>✏️ Worked Example</Label>
-            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.example,false)}</div>
+            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.example,true)}</div>
           </Card>
           <Btn onClick={()=>setLessonStage(3)} color={C.gold} tc="#000">🤔 Check My Understanding →</Btn>
         </div>
@@ -3931,7 +3952,7 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
         <div>
           <Card style={{borderColor:C.orange+"44"}}>
             <Label c={C.orange}>🤔 Check Your Understanding</Label>
-            <div style={{fontSize:14,fontWeight:700,color:C.textLight,marginBottom:12,lineHeight:1.7}}>{lesson.check}</div>
+            <div style={{fontSize:14,fontWeight:600,color:C.textLight,marginBottom:12,lineHeight:1.8}}>{lesson.check}</div>
             <textarea value={userAnswer} onChange={e=>setUserAnswer(e.target.value)} placeholder="Type your answer here..." style={{width:"100%",background:C.card2,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"12px 14px",color:C.textLight,fontSize:13,fontFamily:"inherit",minHeight:80,resize:"vertical",outline:"none"}}/>
             {!feedback&&<Btn onClick={checkAnswer} loading={fbLoading} color={C.orange} tc="#fff" style={{marginTop:8}}>✅ Submit Answer</Btn>}
             {feedback&&(
@@ -3957,7 +3978,7 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
           <div style={{background:C.border,borderRadius:4,height:5,marginBottom:12}}>
             <div style={{background:C.green,height:"100%",borderRadius:4,width:(quizIndex/lesson.quiz.length*100)+"%",transition:"width .4s"}}/>
           </div>
-          <Card><div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:C.textLight}}>{quizQ.q}</div></Card>
+          <Card style={{background:C.card2}}><div style={{fontSize:15,fontWeight:600,lineHeight:1.8,color:"#f1f5f9"}}>{quizQ.q}</div></Card>
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
             {["A","B","C","D"].map(l=>{
               const t=quizQ.options?.[l]||""; if(!t) return null;
@@ -3970,7 +3991,7 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
                   if(quizAnswered)return;
                   setQuizSel(l);setQuizAnswered(true);
                   if(l===quizQ.answer) setQuizScore(s=>s+1);
-                }} style={{background:bg,border:`2px solid ${border}`,borderRadius:12,padding:"12px 14px",color,fontSize:13,textAlign:"left",cursor:quizAnswered?"default":"pointer",display:"flex",gap:10,alignItems:"center",fontFamily:"inherit"}}>
+                }} style={{background:bg,border:`2px solid ${border}`,borderRadius:12,padding:"12px 14px",color:quizAnswered?color:"#f1f5f9",fontSize:13,textAlign:"left",cursor:quizAnswered?"default":"pointer",display:"flex",gap:10,alignItems:"center",fontFamily:"inherit"}}>
                   <span style={{width:26,height:26,borderRadius:"50%",background:quizAnswered&&ok?C.green:quizAnswered&&isSel?C.red:C.card2,color:quizAnswered&&(ok||isSel)?"#fff":C.muted,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,flexShrink:0}}>
                     {quizAnswered?(ok?"✓":isSel?"✗":l):l}
                   </span>
@@ -4008,7 +4029,7 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
               <div style={{fontSize:13,color:C.muted,marginTop:4}}>Quiz score: {quizScore}/{lesson.quiz.length}</div>
             </div>
             <Label c={C.green}>🏁 Key Takeaways</Label>
-            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap",marginBottom:16}}>{fmt(lesson.summary,false)}</div>
+            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap",marginBottom:16}}>{fmt(lesson.summary,true)}</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button onClick={()=>{setStage("select");setLesson(null);setLessonStage(0);setFeedback("");setUserAnswer("");}} style={{flex:1,background:C.purple,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🎓 New Topic</button>
               <button onClick={()=>{
