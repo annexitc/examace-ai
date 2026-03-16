@@ -66,14 +66,14 @@ const NIGERIA_STATES = [
 
 // Gamification helpers (mirror server constants)
 const LEVELS_CLIENT = [
-  {level:1,name:"SS1 Starter",  minXP:0,   badge:"🌱",color:"#22c55e"},
-  {level:2,name:"SS1 Learner",   minXP:100, badge:"📚",color:"#38bdf8"},
-  {level:3,name:"SS2 Scholar",   minXP:300, badge:"⭐",color:"#a855f7"},
-  {level:4,name:"SS3 Candidate", minXP:600, badge:"🎯",color:"#f97316"},
-  {level:5,name:"WAEC Ready",    minXP:1000,badge:"🏅",color:"#f5c842"},
-  {level:6,name:"JAMB Champion", minXP:1500,badge:"🏆",color:"#f5c842"},
-  {level:7,name:"A1 Legend",     minXP:2500,badge:"👑",color:"#ef4444"},
-  {level:8,name:"ExamAce Master",minXP:4000,badge:"💎",color:"#a855f7"},
+  {level:1,name:"Rookie",       minXP:0,   badge:"🌱",color:"#22c55e"},
+  {level:2,name:"Explorer",     minXP:100, badge:"🔍",color:"#38bdf8"},
+  {level:3,name:"Achiever",     minXP:300, badge:"⭐",color:"#a855f7"},
+  {level:4,name:"Scholar",      minXP:600, badge:"📖",color:"#f97316"},
+  {level:5,name:"Contender",    minXP:1000,badge:"🎯",color:"#f5c842"},
+  {level:6,name:"Champion",     minXP:1500,badge:"🏆",color:"#f5c842"},
+  {level:7,name:"Elite",        minXP:2500,badge:"👑",color:"#ef4444"},
+  {level:8,name:"ExamAce Pro",  minXP:4000,badge:"💎",color:"#a855f7"},
 ];
 const getLevelClient = (xp=0) => {
   const lvl  = [...LEVELS_CLIENT].reverse().find(l=>xp>=l.minXP)||LEVELS_CLIENT[0];
@@ -149,6 +149,15 @@ const callAI = async (messages, system, imgData) => {
 // ── QUESTION FETCHER — uses ALOC real past questions + AI fallback ────────────
 // Returns { questions, meta: { alocCount, aiCount, total } }
 const fetchQuestions = async (subject, exam, year, count) => {
+  // If offline, try IndexedDB cache first
+  if (!navigator.onLine) {
+    const cached = await getCachedQuestions(subject, exam);
+    if (cached && cached.length > 0) {
+      const shuffled = [...cached].sort(()=>Math.random()-.5).slice(0, count||10);
+      console.log(`📵 Offline: serving ${shuffled.length} cached questions for ${subject}`);
+      return { questions: shuffled, meta: { alocCount:0, aiCount:0, total:shuffled.length, offline:true }};
+    }
+  }
   const params = new URLSearchParams({
     subject: subject.toLowerCase(),
     exam:    exam.toLowerCase(),
@@ -352,6 +361,109 @@ const getChallengeIdFromUrl = () => {
   try {
     const m = window.location.pathname.match(/\/challenge\/([A-Z0-9]{6})/i);
     return m ? m[1].toUpperCase() : null;
+  } catch { return null; }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INDEXED DB — offline storage for lessons, study cards, cached questions
+// ═══════════════════════════════════════════════════════════════════════════
+const IDB_NAME    = "examace_v1";
+const IDB_VERSION = 1;
+
+const openIDB = () => new Promise((resolve, reject) => {
+  const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+  req.onupgradeneeded = e => {
+    const db = e.target.result;
+    if (!db.objectStoreNames.contains("lessons"))     db.createObjectStore("lessons",     { keyPath:"id" });
+    if (!db.objectStoreNames.contains("studyCards"))  db.createObjectStore("studyCards",  { keyPath:"id" });
+    if (!db.objectStoreNames.contains("questions"))   db.createObjectStore("questions",   { keyPath:"id" });
+    if (!db.objectStoreNames.contains("bookmarks"))   db.createObjectStore("bookmarks",   { keyPath:"id" });
+  };
+  req.onsuccess = e => resolve(e.target.result);
+  req.onerror   = e => reject(e.target.error);
+});
+
+const idbPut = async (store, item) => {
+  try {
+    const db = await openIDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).put(item);
+      tx.oncomplete = () => res(true);
+      tx.onerror    = () => rej(tx.error);
+    });
+  } catch(e) { console.warn("IDB put error:", e); return false; }
+};
+
+const idbGetAll = async (store) => {
+  try {
+    const db = await openIDB();
+    return new Promise((res, rej) => {
+      const tx  = db.transaction(store, "readonly");
+      const req = tx.objectStore(store).getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror   = () => rej(req.error);
+    });
+  } catch(e) { console.warn("IDB getAll error:", e); return []; }
+};
+
+const idbDelete = async (store, id) => {
+  try {
+    const db = await openIDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).delete(id);
+      tx.oncomplete = () => res(true);
+      tx.onerror    = () => rej(tx.error);
+    });
+  } catch(e) { return false; }
+};
+
+// Save a completed lesson to IndexedDB
+const saveLesson = async (lesson, topic, subject, exam) => {
+  const id = `lesson_${subject}_${topic}_${Date.now()}`.replace(/\s+/g,"_");
+  await idbPut("lessons", {
+    id, topic, subject, exam, lesson,
+    savedAt: new Date().toISOString(),
+    date:    new Date().toLocaleDateString("en-NG"),
+  });
+  return id;
+};
+
+// Save study cards (Key Points / Memory Tricks output)
+const saveStudyCard = async (title, content, subject, type) => {
+  const id = `card_${subject}_${Date.now()}`.replace(/\s+/g,"_");
+  await idbPut("studyCards", {
+    id, title, content, subject, type,
+    savedAt: new Date().toISOString(),
+    date:    new Date().toLocaleDateString("en-NG"),
+  });
+  return id;
+};
+
+// Save a bookmark (any AI response)
+const saveBookmark = async (title, content, source) => {
+  const id = `bm_${Date.now()}`;
+  await idbPut("bookmarks", { id, title, content, source, savedAt: new Date().toISOString() });
+  return id;
+};
+
+// Cache questions for offline quiz
+const cacheQuestions = async (subject, exam, questions) => {
+  const id = `q_${subject}_${exam}`.replace(/\s+/g,"_").toLowerCase();
+  await idbPut("questions", { id, subject, exam, questions, cachedAt: Date.now() });
+};
+
+const getCachedQuestions = async (subject, exam) => {
+  try {
+    const db   = await openIDB();
+    const id   = `q_${subject}_${exam}`.replace(/\s+/g,"_").toLowerCase();
+    const all  = await idbGetAll("questions");
+    const entry = all.find(e => e.id === id);
+    if (!entry) return null;
+    // 24-hour cache
+    if (Date.now() - entry.cachedAt > 24*60*60*1000) return null;
+    return entry.questions;
   } catch { return null; }
 };
 
@@ -710,15 +822,18 @@ const fmt = (text, onDark=true) => {
 };
 
 // AI Source badge
-const AiBadge = ({ source }) => {
+const AiBadge = ({ source, year }) => {
   if (!source) return null;
-  // Always show ExamAce branding — never expose underlying AI provider
   const isReal = source === "ALOC";
+  const isAIGen = source === "AI-Generated";
   const isError = source === "Error";
-  const bg    = isReal ? "#22c55e18" : isError ? "#ef444418" : "#f5c84218";
-  const border= isReal ? "#22c55e33" : isError ? "#ef444433" : "#f5c84233";
-  const color = isReal ? "#22c55e"   : isError ? "#ef4444"   : "#f5c842";
-  const label = isReal ? "✅ Real Past Question" : isError ? "⚠️ Try again" : "🏆 ExamAce AI";
+  const bg    = isReal  ? "#22c55e18" : isAIGen ? "#38bdf818" : isError ? "#ef444418" : "#f5c84218";
+  const border= isReal  ? "#22c55e33" : isAIGen ? "#38bdf833" : isError ? "#ef444433" : "#f5c84233";
+  const color = isReal  ? "#22c55e"   : isAIGen ? "#38bdf8"   : isError ? "#ef4444"   : "#f5c842";
+  const label = isReal  ? "✅ ALOC Verified Past Question"
+              : isAIGen ? `🤖 AI-Generated ${year||"2021+"} Style`
+              : isError ? "⚠️ Try again"
+              : "🏆 ExamAce AI";
   return (
     <div style={{ display:"inline-flex", alignItems:"center", gap:4, background:bg, border:`1px solid ${border}`, borderRadius:20, padding:"2px 8px", fontSize:9, color, fontWeight:800, marginTop:6 }}>
       {label}
@@ -750,6 +865,10 @@ const Out = ({text,color=C.gold,source,title="",subtitle=""}) => (
         <button title="Copy text" onClick={()=>{navigator.clipboard.writeText(text);}}
           style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
           <span>📋</span> Copy
+        </button>
+        <button title="Bookmark — save for offline" onClick={()=>{saveBookmark(title||"AI Response",text,source).then(()=>alert("🔖 Saved to your offline library!"));}}
+          style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+          🔖
         </button>
         <button title="Save as PDF" onClick={()=>saveToPDF(title||"ExamAce AI", text, subtitle)}
           style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 12px",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
@@ -1408,7 +1527,7 @@ function JambCBT({ onSaveHistory }) {
                   <div>
                     <div style={{fontSize:11,fontWeight:800,color:C.purple}}>{subjects[curSubj]} · Q{curQ+1}/{currentSubjCount}</div>
                     {q.topic&&<div style={{fontSize:10,color:C.sub,marginTop:2}}>Topic: {q.topic}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</div>}
-                    <div style={{marginTop:3}}><AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/></div>
+                    <div style={{marginTop:3}}><AiBadge source={q.source==="ALOC"?"ALOC":q.source==="AI-Generated"?"AI-Generated":"ExamAce AI"} year={q.yearStyle||q.year}/></div>
                   </div>
                   <div style={{display:"flex",gap:6}}>
                     <button onClick={toggleFlag} style={{background:isFlagged?C.orange+"22":"transparent",border:`1px solid ${isFlagged?C.orange:C.border}`,borderRadius:8,padding:"4px 10px",color:isFlagged?C.orange:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{isFlagged?"🚩":"🏳️"}</button>
@@ -1519,7 +1638,7 @@ function JambCBT({ onSaveHistory }) {
               return(<div key={i} style={{background:C.red+"11",border:`1px solid ${C.red}33`,borderRadius:10,padding:12,marginBottom:8}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                   <span style={{fontSize:11,color:C.muted}}>Q{i+1} · {q.topic||""}{q.year&&q.year!=="Past"?" · JAMB "+q.year:""}</span>
-                  <AiBadge source={q.source==="ALOC"?"ALOC":"AI"}/>
+                  <AiBadge source={q.source==="ALOC"?"ALOC":q.source==="AI-Generated"?"AI-Generated":"ExamAce AI"} year={q.yearStyle||q.year}/>
                 </div>
                 <div style={{fontSize:13,color:C.textLight,marginBottom:6,lineHeight:1.5}}>{q.q}</div>
                 <div style={{fontSize:12,color:C.red,marginBottom:4}}>Your answer: <b>{userAns||"Not answered"}</b> · Correct: <b style={{color:C.green}}>{q.answer}</b></div>
@@ -1562,6 +1681,7 @@ function Quiz({ onSaveHistory }) {
   const [coach,setCoach]=useState("");
   const [coachLoading,setCoachLoading]=useState(false);
   const [showChallenge,setShowChallenge]=useState(false);
+  const [showDisclaimer,setShowDisclaimer]=useState(false);
   const [aiSource,setAiSource]=useState("");
   const tRef=useRef();
 
@@ -1576,11 +1696,26 @@ function Quiz({ onSaveHistory }) {
     catch{return null;}
   };
 
+  const [disclaimerDone, setDisclaimerDone] = useState(()=>{
+    try { return sessionStorage.getItem("examace_disclaimer")==="1"; } catch { return false; }
+  });
+
   const start = async () => {
+    // Show AI-question disclaimer once per session for years 2021+ or unfiltered
+    const yr = parseInt(year||"0");
+    if (!disclaimerDone && (yr >= 2021 || qtype !== "year")) {
+      setShowDisclaimer(true);
+      try { sessionStorage.setItem("examace_disclaimer","1"); } catch {}
+      setDisclaimerDone(true);
+      return;
+    }
+    _doStart();
+  };
+
+  const _doStart = async () => {
     setLoading(true);
     setAiSource("");
     try {
-      // Use ALOC real past questions with AI fallback
       const requestYear = qtype==="year" ? year : null;
       const { questions, meta } = await fetchQuestions(subject, exam, requestYear, count);
 
@@ -1606,7 +1741,7 @@ function Quiz({ onSaveHistory }) {
       alert("Connection error. Please try again.");
     }
     setLoading(false);
-  };
+  }; // end _doStart
 
   const handle = l => {
     if(answered)return;
@@ -1653,6 +1788,24 @@ Keep it warm and Nigeria-context aware.`);
 
   const pct=qs.length>0?Math.round((score/qs.length)*100):0;
   const grade=gradeFromPct(pct);
+
+  // Disclaimer modal for AI-generated questions
+  if(showDisclaimer) return(
+    <div style={{padding:"20px 0"}}>
+      <Card style={{background:C.sky+"0a",borderColor:C.sky+"44"}}>
+        <div style={{fontSize:22,marginBottom:8}}>🤖</div>
+        <div style={{fontWeight:800,fontSize:15,color:C.sky,marginBottom:8}}>About Question Sources</div>
+        <div style={{fontSize:13,color:C.textLight,lineHeight:1.8,marginBottom:12}}>
+          <b style={{color:C.green}}>✅ ALOC Verified (2001–2020):</b> Real past questions directly from official exam records.<br/><br/>
+          <b style={{color:C.sky}}>🤖 AI-Generated (2021–2025 Style):</b> Questions created by AI based on official syllabus trends and recent exam patterns. They closely mirror real exam style but are <b>not official past questions</b>.
+        </div>
+        <div style={{background:C.card2,borderRadius:10,padding:"10px 12px",fontSize:12,color:C.muted,marginBottom:16,lineHeight:1.7}}>
+          Students find AI-generated questions excellent for practice — they follow the same topics, difficulty levels, and question styles as official exams.
+        </div>
+        <Btn onClick={()=>{ setShowDisclaimer(false); _doStart(); }} color={C.sky} tc="#000">✅ Understood — Start Quiz</Btn>
+      </Card>
+    </div>
+  );
   const q=qs[cur];
 
   return (
@@ -2616,7 +2769,15 @@ ${NG_CONTEXT}
   const run = async () => {
     if(!subject){alert("Select a subject!");return;}
     setLoading(true);setOut("");setAiSource("");
-    try{const {text,source}=await callAI(PROMPTS[sub](),SYS(exam,subject,year));setOut(text);setAiSource(source);}
+    try{
+      const {text,source}=await callAI(PROMPTS[sub](),SYS(exam,subject,year));
+      setOut(text);setAiSource(source);
+      // Auto-save Key Points and Memory Tricks as study cards
+      if(["keypoints","mnemonics"].includes(sub)){
+        const cardTitle = (sub==="keypoints"?"Key Points: ":"Memory Tricks: ")+(topic||subject);
+        saveStudyCard(cardTitle, text, subject, sub).catch(()=>{});
+      }
+    }
     catch{setOut("⚠️ Error. Try again.");}
     setLoading(false);
   };
@@ -2704,6 +2865,12 @@ D7-F9 (below 45%): [X]%
       desc: weakCount>0 ? `${weakCount} topic${weakCount>1?"s":""} below 50% accuracy — tap to drill` : "Complete more quizzes to discover your weak areas",
       color:C.red, badge:weakCount,
       detail:"Focused practice on topics where you score below 50% — fastest way to improve",
+    },
+    {
+      id:"library", icon:"📂", label:"My Offline Library",
+      desc:"Saved lessons, study cards and bookmarks — available without internet",
+      color:C.teal,
+      detail:"Every completed lesson and AI study note is saved here automatically. Works offline.",
     },
     {
       id:"focusareas", icon:"🎯", label:"What to Focus On",
@@ -2802,6 +2969,89 @@ D7-F9 (below 45%): [X]%
 
       {/* Weakness drill */}
       {sub==="weakness"&&<WeaknessPanel/>}
+
+      {/* ── OFFLINE LIBRARY PANEL ────────────────────────────────────────── */}
+      {sub==="library"&&(()=>{
+        const [tab,setLibTab]=useState("lessons"); // lessons|cards|bookmarks
+        const [lessons,setLessons]=useState([]);
+        const [cards,setCards]=useState([]);
+        const [bookmarks,setBookmarks]=useState([]);
+        const [reading,setReading]=useState(null);
+        const [loading,setLoading]=useState(true);
+
+        useEffect(()=>{
+          Promise.all([idbGetAll("lessons"),idbGetAll("studyCards"),idbGetAll("bookmarks")])
+            .then(([l,c,b])=>{ setLessons(l.reverse()); setCards(c.reverse()); setBookmarks(b.reverse()); setLoading(false); });
+        },[]);
+
+        if(reading) return(
+          <div>
+            <button onClick={()=>setReading(null)} style={{background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"pointer",fontFamily:"inherit",padding:"0 0 12px 0"}}>← Back to library</button>
+            <Card style={{borderColor:C.teal+"44"}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.teal,marginBottom:8}}>{reading.topic||reading.title}</div>
+              <div style={{fontSize:11,color:C.sub,marginBottom:12}}>{reading.subject} · {reading.date}</div>
+              {reading.lesson?(
+                <>
+                  <Label>Introduction</Label>
+                  <div style={{fontSize:13,color:C.textLight,lineHeight:1.8,marginBottom:10}}>{reading.lesson.intro}</div>
+                  <Label>Explanation</Label>
+                  <div style={{fontSize:13,lineHeight:1.9,marginBottom:10}}>{fmt(reading.lesson.explain,true)}</div>
+                  <Label>Worked Example</Label>
+                  <div style={{fontSize:13,lineHeight:1.9,marginBottom:10}}>{fmt(reading.lesson.example,true)}</div>
+                  <Label>Key Takeaways</Label>
+                  <div style={{fontSize:13,lineHeight:1.9}}>{fmt(reading.lesson.summary,true)}</div>
+                </>
+              ):(
+                <div style={{fontSize:13,lineHeight:1.9}}>{fmt(reading.content||"",true)}</div>
+              )}
+            </Card>
+            <button onClick={()=>{
+              const pdfContent = reading.lesson
+                ? "INTRODUCTION\n"+reading.lesson.intro+"\n\nEXPLANATION\n"+reading.lesson.explain+"\n\nEXAMPLE\n"+reading.lesson.example+"\n\nSUMMARY\n"+reading.lesson.summary
+                : reading.content||"";
+              saveToPDF(reading.topic||reading.title, pdfContent, (reading.subject||"")+" · ExamAce AI");
+            }} style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:10,padding:"8px 16px",color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginTop:8,display:"flex",alignItems:"center",gap:6}}>
+              <span>📄</span> Save as PDF
+            </button>
+          </div>
+        );
+
+        if(loading) return <Card style={{textAlign:"center",padding:24}}><div style={{color:C.muted}}>Loading library…</div></Card>;
+
+        const total = lessons.length + cards.length + bookmarks.length;
+        return(
+          <div>
+            <Card style={{background:C.teal+"0a",borderColor:C.teal+"33",marginBottom:8}}>
+              <div style={{fontWeight:800,fontSize:14,color:C.teal,marginBottom:3}}>📂 My Offline Library</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>{total>0?`${total} saved items — all available without internet`:"Nothing saved yet. Complete a lesson or save a study note to build your library."}</div>
+            </Card>
+            <div style={{display:"flex",gap:6,marginBottom:12}}>
+              {[["lessons","🎓 Lessons",lessons.length,C.purple],["cards","📌 Study Cards",cards.length,C.gold],["bookmarks","🔖 Bookmarks",bookmarks.length,C.blue]].map(([t,l,count,col])=>(
+                <button key={t} onClick={()=>setLibTab(t)} style={{flex:1,background:tab===t?col+"22":"transparent",border:`1px solid ${tab===t?col:C.border}`,borderRadius:20,padding:"6px 0",color:tab===t?col:C.muted,fontWeight:tab===t?800:400,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+                  {l} {count>0&&<span style={{background:col,color:"#fff",borderRadius:"50%",padding:"0 5px",fontSize:9,fontWeight:900,marginLeft:3}}>{count}</span>}
+                </button>
+              ))}
+            </div>
+            {(tab==="lessons"?lessons:tab==="cards"?cards:bookmarks).length===0?(
+              <Card style={{textAlign:"center",padding:24}}>
+                <div style={{fontSize:28,marginBottom:8}}>{tab==="lessons"?"🎓":tab==="cards"?"📌":"🔖"}</div>
+                <div style={{color:C.muted,fontSize:13}}>{tab==="lessons"?"Complete a Deep Learning lesson to save it here":tab==="cards"?"Generate Key Points or Memory Tricks to create study cards":"Tap the 🔖 icon on any AI response to bookmark it"}</div>
+              </Card>
+            ):(
+              (tab==="lessons"?lessons:tab==="cards"?cards:bookmarks).map((item,i)=>(
+                <div key={i} onClick={()=>setReading(item)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:8,cursor:"pointer",display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{fontSize:22,flexShrink:0}}>{tab==="lessons"?"🎓":tab==="cards"?"📌":"🔖"}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:13,color:C.textLight,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.topic||item.title||"Saved item"}</div>
+                    <div style={{fontSize:11,color:C.muted}}>{item.subject||""} {item.subject?"·":""} {item.date}</div>
+                  </div>
+                  <div style={{color:C.muted,fontSize:16}}>→</div>
+                </div>
+              ))
+            )}
+          </div>
+        );
+      })()}
 
       {/* AI output */}
       {out&&["focusareas","keypoints","mnemonics"].includes(sub)&&(
@@ -3936,16 +4186,50 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
         </div>
       )}
 
-      {/* Stage 2: Worked Example */}
-      {lessonStage===2&&(
-        <div>
-          <Card style={{background:C.gold+"0a",borderColor:C.gold+"44"}}>
-            <Label c={C.gold}>✏️ Worked Example</Label>
-            <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap"}}>{fmt(lesson.example,true)}</div>
-          </Card>
-          <Btn onClick={()=>setLessonStage(3)} color={C.gold} tc="#000">🤔 Check My Understanding →</Btn>
-        </div>
-      )}
+      {/* Stage 2: Watch Me Solve — streams the worked example line-by-line */}
+      {lessonStage===2&&(()=>{
+        const [lines,setLines]    = useState([]);
+        const [streaming,setStr] = useState(false);
+        const [done,setDone]     = useState(false);
+
+        useEffect(()=>{
+          if(done||streaming) return;
+          // Split example into lines and stream them with 220ms between each
+          const allLines = (lesson.example||"").split("\n").filter(l=>l.trim());
+          setStr(true);
+          let i=0;
+          const tick = setInterval(()=>{
+            if(i<allLines.length){
+              setLines(prev=>[...prev, allLines[i]]);
+              i++;
+            } else {
+              clearInterval(tick);
+              setStr(false);
+              setDone(true);
+            }
+          }, 220);
+          return ()=>clearInterval(tick);
+        },[]);
+
+        return(
+          <div>
+            <Card style={{background:C.gold+"0a",borderColor:C.gold+"44"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <Label c={C.gold}>✏️ Watch the Solution Unfold</Label>
+                {streaming&&<span style={{fontSize:10,color:C.gold,fontWeight:700,animation:"blink 1s infinite"}}>● LIVE</span>}
+              </div>
+              <div style={{fontSize:14,color:C.textLight,lineHeight:2,whiteSpace:"pre-wrap"}}>
+                {lines.map((l,i)=>(
+                  <div key={i} style={{animation:"fadeUp .3s ease",marginBottom:2}}>{fmt(l,true)}</div>
+                ))}
+                {streaming&&<span style={{display:"inline-block",width:8,height:15,background:C.gold,borderRadius:2,marginLeft:4,animation:"blink .7s step-end infinite",verticalAlign:"middle"}}/>}
+              </div>
+            </Card>
+            {done&&<Btn onClick={()=>setLessonStage(3)} color={C.gold} tc="#000">🤔 Check My Understanding →</Btn>}
+            {!done&&<div style={{textAlign:"center",fontSize:12,color:C.muted,padding:"10px 0"}}>Writing solution…</div>}
+          </div>
+        );
+      })()}
 
       {/* Stage 3: Understanding Check */}
       {lessonStage===3&&(
@@ -4030,13 +4314,27 @@ Respond in 3-4 sentences: (1) Say if they're right/partially right/wrong. (2) Co
             </div>
             <Label c={C.green}>🏁 Key Takeaways</Label>
             <div style={{fontSize:14,color:C.textLight,lineHeight:1.9,whiteSpace:"pre-wrap",marginBottom:16}}>{fmt(lesson.summary,true)}</div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              <button onClick={()=>{setStage("select");setLesson(null);setLessonStage(0);setFeedback("");setUserAnswer("");}} style={{flex:1,background:C.purple,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🎓 New Topic</button>
-              <button onClick={()=>{
-                sessionStorage.setItem("examace_show_me","Explain "+activeTopic+" in "+subject+" with more examples for "+exam);
-                alert("Switch to Ask AI tab for more practice!");
-              }} style={{flex:1,background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:12,padding:"12px 0",color:C.sky,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>💬 Ask AI More</button>
-            </div>
+            {(()=>{
+              const [saved,setSaved]=useState(false);
+              // Auto-save lesson on summary mount
+              useEffect(()=>{
+                if(!saved){
+                  saveLesson(lesson,activeTopic,subject,exam).then(()=>setSaved(true));
+                }
+              },[]);
+              return(
+                <>
+                  {saved&&<div style={{background:C.green+"18",border:`1px solid ${C.green}33`,borderRadius:10,padding:"7px 14px",fontSize:12,color:C.green,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>✅ Lesson saved to your offline library</div>}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button onClick={()=>{setStage("select");setLesson(null);setLessonStage(0);setFeedback("");setUserAnswer("");}} style={{flex:1,background:C.purple,border:"none",borderRadius:12,padding:"12px 0",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🎓 New Topic</button>
+                    <button onClick={()=>{
+                      sessionStorage.setItem("examace_show_me","Explain "+activeTopic+" in "+subject+" with more examples for "+exam);
+                      alert("Switch to Ask AI tab for more practice!");
+                    }} style={{flex:1,background:C.blue+"22",border:`1px solid ${C.blue}44`,borderRadius:12,padding:"12px 0",color:C.sky,fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>💬 Ask AI More</button>
+                  </div>
+                </>
+              );
+            })()}
             <button onClick={()=>saveToPDF(
               activeTopic+" — "+subject,
               "INTRODUCTION\n"+lesson.intro+"\n\nEXPLANATION\n"+lesson.explain+"\n\nWORKED EXAMPLE\n"+lesson.example+"\n\nKEY TAKEAWAYS\n"+lesson.summary,
@@ -4713,26 +5011,36 @@ export default function App() {
     preCacheQuestionsForOffline(userData);
   };
 
-  // Pre-cache the student's subjects × top exam types so questions work offline
+  // Pre-cache 50 questions per subject into IndexedDB for offline quiz
   const preCacheQuestionsForOffline = async (userData) => {
     const subjects = userData?.subjects?.length > 0
       ? userData.subjects
       : ["Mathematics","English Language","Physics","Chemistry","Biology"];
-    const exams = [userData?.exam || "WAEC"];
-    // Fire-and-forget — cache in background without blocking UI
+    const exam = userData?.exam || "WAEC";
+    // Only cache on good connection — check navigator.connection if available
+    const conn = navigator?.connection;
+    const isWifi = !conn || conn.type === "wifi" || conn.effectiveType === "4g";
+    if (!isWifi) { console.log("📵 Skipping pre-cache on slow connection"); return; }
+
     setTimeout(async () => {
       for (const subject of subjects.slice(0,5)) {
-        for (const exam of exams) {
-          try {
-            await fetchQuestions(subject, exam, null, 40);
-            console.log(`📦 Cached offline: ${subject} ${exam}`);
-          } catch(e) { /* silently ignore — user may be offline */ }
-          // Small delay to avoid hammering the API
-          await new Promise(r => setTimeout(r, 800));
-        }
+        try {
+          // Check if already cached recently
+          const cached = await getCachedQuestions(subject, exam);
+          if (cached && cached.length >= 40) {
+            console.log(`💾 Already cached: ${subject}`);
+            continue;
+          }
+          const {questions} = await fetchQuestions(subject, exam, null, 50);
+          if (questions.length > 0) {
+            await cacheQuestions(subject, exam, questions);
+            console.log(`📦 Cached ${questions.length} questions offline: ${subject}`);
+          }
+        } catch(e) { console.warn(`Pre-cache failed for ${subject}:`, e.message); }
+        await new Promise(r => setTimeout(r, 1000));
       }
-      console.log("✅ Offline question cache ready");
-    }, 2000); // Wait 2s after login before caching
+      console.log("✅ Offline question cache ready (IndexedDB)");
+    }, 3000);
   };
 
   const handleLogout = () => {
@@ -4827,7 +5135,7 @@ export default function App() {
       {!isOnline&&(
         <div style={{background:C.orange+"22",borderBottom:`1px solid ${C.orange}44`,padding:"8px 14px",display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.orange,fontWeight:700}}>
           <span>📵</span>
-          <span>You're offline — quiz history and saved questions still available</span>
+          <span>Offline — You can still study · Saved lessons and cached questions available</span>
         </div>
       )}
 
